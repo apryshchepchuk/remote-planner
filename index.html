@@ -788,7 +788,29 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 const SUPABASE_URL = "https://gwpmbzkuvkamitvtvjiy.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3cG1iemt1dmthbWl0dnR2aml5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0ODE1MDgsImV4cCI6MjA4MjA1NzUwOH0.6vgbAK0nIj3FqaX39FgQatNtj4EYecXf9fUl2RxExbo";
 
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  }
+});
+
+  function setAuthUI(session){
+  const authCard = document.getElementById("authCard");     // твій блок логіну
+  const authState = document.getElementById("authStatus");   // маленький текст “Logged in…”
+  const btnLogout = document.getElementById("btnLogout");   // кнопка Logout (якщо є)
+
+  if(session?.user){
+    if(authCard) authCard.style.display = "none";
+    if(btnLogout) btnLogout.style.display = "inline-flex";
+    if(authState) authState.textContent = `Logged in: ${session.user.email}`;
+  } else {
+    if(authCard) authCard.style.display = "block";
+    if(btnLogout) btnLogout.style.display = "none";
+    if(authState) authState.textContent = `Not logged in`;
+  }
+}
 /** =============================
  * 0) Team
  * ============================= */
@@ -2185,9 +2207,27 @@ function autoDownloadSummaryEml(weekStartIso){
 
   downloadText(`summary_${weekStartIso}.eml`, eml, "message/rfc822");
 }
+async function initAuthAndRender(){
+  const { data, error } = await sb.auth.getSession();
+  if(error) console.error("getSession error:", error);
 
+  setAuthUI(data?.session);
+
+  // якщо ти прив’язуєш meSel/роль до user email — роби це тут
+  // await loadMyProfileRole(data?.session);
+
+  render();
+}
+
+// реагуємо на логін/логаут/refresh токена
+sb.auth.onAuthStateChange((_event, session) => {
+  setAuthUI(session);
+  render();
+});
+
+initAuthAndRender();
 /** init */
-render();
+initAuthAndRender();
 </script>
 </body>
 
