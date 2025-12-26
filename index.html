@@ -721,9 +721,12 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   </div>
 <div class="card" id="authCard">
   <div class="row">
-    <input id="loginEmail" type="email" placeholder="Email" />
-    <input id="loginPass" type="password" placeholder="Password" />
-    <button id="btnLogin" class="primary">Login</button>
+    <div id="loginFields" class="row" style="gap:10px; flex-wrap:wrap;">
+      <input id="loginEmail" type="email" placeholder="Email" />
+      <input id="loginPass" type="password" placeholder="Password" />
+      <button id="btnLogin" class="primary">Login</button>
+    </div>
+
     <button id="btnLogout" class="bad" style="display:none;">Logout</button>
     <span class="right"></span>
     <span class="muted small" id="authStatus"></span>
@@ -796,19 +799,25 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
-  function setAuthUI(session){
-  const authCard = document.getElementById("authCard");     // твій блок логіну
-  const authState = document.getElementById("authStatus");   // маленький текст “Logged in…”
-  const btnLogout = document.getElementById("btnLogout");   // кнопка Logout (якщо є)
+function setAuthUI(session){
+  const authCard   = document.getElementById("authCard");
+  const loginBlock = document.getElementById("loginFields");
+  const authState  = document.getElementById("authStatus");
+  const btnLogout  = document.getElementById("btnLogout");
 
-  if(session?.user){
-    if(authCard) authCard.style.display = "none";
-    if(btnLogout) btnLogout.style.display = "inline-flex";
-    if(authState) authState.textContent = `Logged in: ${session.user.email}`;
-  } else {
-    if(authCard) authCard.style.display = "block";
-    if(btnLogout) btnLogout.style.display = "none";
-    if(authState) authState.textContent = `Not logged in`;
+  const loggedIn = !!session?.user;
+
+  // authCard завжди видимий
+  if(authCard) authCard.style.display = "block";
+
+  // показуємо або логін, або логаут
+  if(loginBlock) loginBlock.style.display = loggedIn ? "none" : "flex";
+  if(btnLogout)  btnLogout.style.display  = loggedIn ? "inline-flex" : "none";
+
+  if(authState){
+    authState.textContent = loggedIn
+      ? `Logged in: ${session.user.email}`
+      : "Not logged in";
   }
 }
 /** =============================
@@ -2216,7 +2225,7 @@ async function initAuthAndRender(){
   // якщо ти прив’язуєш meSel/роль до user email — роби це тут
   // await loadMyProfileRole(data?.session);
 
-  render();
+initAuthAndRender();
 }
 
 // реагуємо на логін/логаут/refresh токена
