@@ -1,3 +1,7 @@
+const SUPABASE_URL = "https://gwpmbzkuvkamitvtvjiy.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3cG1iemt1dmthbWl0dnR2aml5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0ODE1MDgsImV4cCI6MjA4MjA1NzUwOH0.6vgbAK0nIj3FqaX39FgQatNtj4EYecXf9fUl2RxExbo";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 <!doctype html>
 <html lang="uk">
 <head>
@@ -719,7 +723,16 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   <div class="top">
     <h1>Графік офіс/remote</h1>
   </div>
-
+<div class="card" id="authCard">
+  <div class="row">
+    <input id="loginEmail" type="email" placeholder="Email" />
+    <input id="loginPass" type="password" placeholder="Password" />
+    <button id="btnLogin" class="primary">Login</button>
+    <button id="btnLogout" class="bad" style="display:none;">Logout</button>
+    <span class="right"></span>
+    <span class="muted small" id="authStatus"></span>
+  </div>
+</div>
   <div class="card">
     <div class="row">
       <label class="badge">Я:</label>
@@ -773,7 +786,8 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     <div class="muted small">Токени оновлюються щомісяця (1 на людину). Fairness roll підсилює того, хто частіше програвав конфлікти.</div>
   </div>
 </div>
-
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
 <script>
 /** =============================
  * 0) Team
@@ -831,7 +845,68 @@ function monthKey(d){
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}`;
 }
+async function loadMyProfile(){
+  const { data: { user } } = await sb.auth.getUser();
+  if(!user) return null;
 
+  const { data, error } = await sb
+    .from("profiles")
+    .select("id,email,full_name,role")
+    .eq("id", user.id)
+    .single();
+
+  if(error){
+    console.error("loadMyProfile error:", error);
+    return null;
+  }
+  return data;
+}
+
+async function refreshAuthUI(){
+  const statusEl = document.getElementById("authStatus");
+  const btnLogout = document.getElementById("btnLogout");
+  const btnLogin = document.getElementById("btnLogin");
+
+  const { data: { session } } = await sb.auth.getSession();
+
+  if(!session){
+    statusEl.textContent = "Not logged in";
+    btnLogout.style.display = "none";
+    btnLogin.style.display = "";
+    return;
+  }
+
+  const profile = await loadMyProfile();
+  statusEl.textContent = profile ? `Logged in: ${profile.email} (${profile.role})` : `Logged in`;
+  btnLogout.style.display = "";
+  btnLogin.style.display = "none";
+}
+
+document.getElementById("btnLogin").onclick = async () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPass").value;
+
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){
+    alert("Login error: " + error.message);
+    return;
+  }
+  await refreshAuthUI();
+  // тут потім підв’яжемо завантаження planner з БД
+};
+
+document.getElementById("btnLogout").onclick = async () => {
+  await sb.auth.signOut();
+  await refreshAuthUI();
+};
+
+// автооновлення при зміні сесії
+sb.auth.onAuthStateChange(async () => {
+  await refreshAuthUI();
+});
+
+// init
+refreshAuthUI();
 
 /** =============================
  * 2) State model
