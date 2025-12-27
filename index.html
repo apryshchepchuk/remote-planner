@@ -756,7 +756,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   <button class="tabBtn" id="tabNext">Наступний тиждень (планування)</button>
   <button class="tabBtn" id="tabThis">Цей тиждень (перегляд)</button>
 </div>
-
+  
 <div id="paneNext" class="tabPane">
   <div class="card" id="nextWeekCard"></div>
 </div>
@@ -820,6 +820,50 @@ function setAuthUI(session){
       : "Not logged in";
   }
 }
+  async function initAuthAndRender(){
+  const { data: { session }, error } = await sb.auth.getSession();
+  if(error) console.error("getSession error:", error);
+
+  setAuthUI(session);
+  render(); // стартовий рендер
+}
+
+// login
+document.getElementById("btnLogin").addEventListener("click", async (e) => {
+  e.preventDefault();
+
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPass").value;
+
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){
+    alert("Login error: " + error.message);
+    return;
+  }
+  // UI оновиться через onAuthStateChange
+});
+
+// logout
+document.getElementById("btnLogout").addEventListener("click", async (e) => {
+  e.preventDefault();
+
+  const { error } = await sb.auth.signOut();
+  if(error){
+    console.error("signOut error:", error);
+    alert("Logout error: " + error.message);
+    return;
+  }
+  // UI оновиться через onAuthStateChange
+});
+
+// єдина підписка на зміни сесії
+sb.auth.onAuthStateChange((_event, session) => {
+  setAuthUI(session);
+  render();
+});
+
+// init ОДИН раз
+initAuthAndRender();
 /** =============================
  * 0) Team
  * ============================= */
@@ -893,51 +937,6 @@ async function loadMyProfile(){
   return data;
 }
 
-async function refreshAuthUI(){
-  const statusEl = document.getElementById("authStatus");
-  const btnLogout = document.getElementById("btnLogout");
-  const btnLogin = document.getElementById("btnLogin");
-
-  const { data: { session } } = await sb.auth.getSession();
-
-  if(!session){
-    statusEl.textContent = "Not logged in";
-    btnLogout.style.display = "none";
-    btnLogin.style.display = "";
-    return;
-  }
-
-  const profile = await loadMyProfile();
-  statusEl.textContent = profile ? `Logged in: ${profile.email} (${profile.role})` : `Logged in`;
-  btnLogout.style.display = "";
-  btnLogin.style.display = "none";
-}
-
-document.getElementById("btnLogin").onclick = async () => {
-  const email = document.getElementById("loginEmail").value.trim();
-  const password = document.getElementById("loginPass").value;
-
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if(error){
-    alert("Login error: " + error.message);
-    return;
-  }
-  await refreshAuthUI();
-  // тут потім підв’яжемо завантаження planner з БД
-};
-
-document.getElementById("btnLogout").onclick = async () => {
-  await sb.auth.signOut();
-  await refreshAuthUI();
-};
-
-// автооновлення при зміні сесії
-sb.auth.onAuthStateChange(async () => {
-  await refreshAuthUI();
-});
-
-// init
-refreshAuthUI();
 
 /** =============================
  * 2) State model
@@ -2216,27 +2215,9 @@ function autoDownloadSummaryEml(weekStartIso){
 
   downloadText(`summary_${weekStartIso}.eml`, eml, "message/rfc822");
 }
-async function initAuthAndRender(){
-  const { data, error } = await sb.auth.getSession();
-  if(error) console.error("getSession error:", error);
 
-  setAuthUI(data?.session);
 
-  // якщо ти прив’язуєш meSel/роль до user email — роби це тут
-  // await loadMyProfileRole(data?.session);
 
-initAuthAndRender();
-}
-
-// реагуємо на логін/логаут/refresh токена
-sb.auth.onAuthStateChange((_event, session) => {
-  setAuthUI(session);
-  render();
-});
-
-initAuthAndRender();
-/** init */
-initAuthAndRender();
 </script>
 </body>
 
