@@ -798,6 +798,18 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: true,
   }
 });
+  
+let currentSession = null;
+
+async function getSession(){
+  const { data: { session } } = await sb.auth.getSession();
+  currentSession = session;
+  return session;
+}
+
+function isLoggedIn(){
+  return !!currentSession?.user;
+}
 
 function setAuthUI(session){
   const authCard   = document.getElementById("authCard");
@@ -820,50 +832,7 @@ function setAuthUI(session){
       : "Not logged in";
   }
 }
-  async function initAuthAndRender(){
-  const { data: { session }, error } = await sb.auth.getSession();
-  if(error) console.error("getSession error:", error);
 
-  setAuthUI(session);
-  render(); // стартовий рендер
-}
-
-// login
-document.getElementById("btnLogin").addEventListener("click", async (e) => {
-  e.preventDefault();
-
-  const email = document.getElementById("loginEmail").value.trim();
-  const password = document.getElementById("loginPass").value;
-
-  const { error } = await sb.auth.signInWithPassword({ email, password });
-  if(error){
-    alert("Login error: " + error.message);
-    return;
-  }
-  // UI оновиться через onAuthStateChange
-});
-
-// logout
-document.getElementById("btnLogout").addEventListener("click", async (e) => {
-  e.preventDefault();
-
-  const { error } = await sb.auth.signOut();
-  if(error){
-    console.error("signOut error:", error);
-    alert("Logout error: " + error.message);
-    return;
-  }
-  // UI оновиться через onAuthStateChange
-});
-
-// єдина підписка на зміни сесії
-sb.auth.onAuthStateChange((_event, session) => {
-  setAuthUI(session);
-  render();
-});
-
-// init ОДИН раз
-initAuthAndRender();
 /** =============================
  * 0) Team
  * ============================= */
@@ -936,7 +905,81 @@ async function loadMyProfile(){
   }
   return data;
 }
+function weekToRow(weekStartIso){
+  const w = getWeek(weekStartIso);
 
+  // supabase schema: planner_weeks.week_start (date), status, approved_by(uuid), approved_at, reservations(jsonb), day_off(jsonb)
+  return {
+    week_start: weekStartIso,                 // "YYYY-MM-DD"
+    status: w.status || "draft",
+    approved_by: w.status === "approved" ? (currentSession?.user?.id || null) : null,
+    approved_at: w.status === "approved" ? (w.approvedAt || new Date().toISOString()) : null,
+    reservations: w.reservations || {},
+    day_off: w.dayOff || {},
+  };
+}
+
+function rowToWeek(row){
+  return {
+    status: row.status || "draft",
+    approvedBy: row.approved_by ? "m1" : null,          // поки що (зв’яжемо з profiles пізніше)
+    approvedAt: row.approved_at || null,
+    reservations: row.reservations || {},
+    dayOff: row.day_off || {},
+    overrides: {}, // поки не зберігаємо в БД (пізніше додамо, якщо треба)
+    duels: {},
+    dayMeta: {},
+  };
+}
+
+async function loadNextWeekFromDB(){
+  if(!isLoggedIn()) return;
+
+  const { data, error } = await sb
+    .from("planner_weeks")
+    .select("*")
+    .eq("week_start", nextWeekStart)
+    .maybeSingle();
+
+  if(error){
+    console.error("loadNextWeekFromDB error:", error);
+    return;
+  }
+
+  if(!data){
+    // якщо запису нема — створимо з поточного local state
+    await saveNextWeekToDB();
+    return;
+  }
+
+  // мердж: заміняємо week у state на версію з БД
+  state.weeks[nextWeekStart] = { ...emptyWeek(), ...rowToWeek(data) };
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+}
+
+async function saveNextWeekToDB(){
+  if(!isLoggedIn()) return;
+
+  const row = weekToRow(nextWeekStart);
+
+  const { error } = await sb
+    .from("planner_weeks")
+    .upsert(row, { onConflict: "week_start" });
+
+  if(error){
+    console.error("saveNextWeekToDB error:", error);
+  }
+}
+let saveNextWeekTimer = null;
+
+function queueSaveNextWeekToDB(){
+  if(!isLoggedIn()) return;
+
+  clearTimeout(saveNextWeekTimer);
+  saveNextWeekTimer = setTimeout(() => {
+    saveNextWeekToDB();
+  }, 400); // 300–500 мс оптимально
+}
 
 /** =============================
  * 2) State model
@@ -1007,7 +1050,11 @@ if(!w.overrides) w.overrides = {};
 
 function saveState(){
   localStorage.setItem(LS_KEY, JSON.stringify(state));
-  // render викликаємо лише якщо UI вже ініціалізований
+
+  // пишемо в Supabase тільки nextWeekStart
+  // (і тільки якщо залогінені)
+  queueSaveNextWeekToDB();
+
   if (typeof meSel !== "undefined" && meSel) render();
 }
 
@@ -1494,8 +1541,12 @@ function renderWeekCard(containerId, weekStartIso, isCurrentWeek){
   const w = getWeek(weekStartIso);
   const me = currentUser();
 
-  // чи можна редагувати цей тиждень
-const editable = (!isCurrentWeek) && (w.status !== "approved") && (me.role !== "manager");
+const editable =
+  isLoggedIn() &&
+  (!isCurrentWeek) &&
+  (w.status !== "approved") &&
+  (me.role !== "manager");
+
 
   // ТІЛЬКИ грід (без шапки/рамки/текстів)
   container.innerHTML = `
@@ -2216,6 +2267,44 @@ function autoDownloadSummaryEml(weekStartIso){
   downloadText(`summary_${weekStartIso}.eml`, eml, "message/rfc822");
 }
 
+/** =============================
+ * 6) Auth init (single entry point)
+ *  - init session
+ *  - load week from DB only when logged in
+ *  - re-render on auth changes
+ * ============================= */
+
+async function boot(){
+  // 1) стартова сесія
+  const { data: { session }, error } = await sb.auth.getSession();
+  if(error) console.error("getSession error:", error);
+
+  currentSession = session;
+  setAuthUI(session);
+
+  // 2) якщо залогінені — підтягуємо nextWeek з БД і мерджимо в state
+  if(isLoggedIn()){
+    await loadNextWeekFromDB();
+  }
+
+  // 3) перший рендер (вже коли nextWeekStart існує)
+  render();
+}
+
+// 4) один listener на зміну auth-стану
+sb.auth.onAuthStateChange(async (_event, session) => {
+  currentSession = session;
+  setAuthUI(session);
+
+  if(isLoggedIn()){
+    await loadNextWeekFromDB();
+  }
+
+  render();
+});
+
+// 5) запускаємо boot ОДИН раз
+boot();
 
 
 </script>
