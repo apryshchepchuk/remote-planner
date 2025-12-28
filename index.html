@@ -833,6 +833,15 @@ function setAuthUI(session){
   }
 }
 
+
+// helper: don't let network waits block UI forever
+function withTimeout(promise, ms){
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))
+  ]);
+}
+
   function supabaseRef(){
   // https://xxxx.supabase.co -> xxxx
   try { return new URL(SUPABASE_URL).hostname.split(".")[0]; }
@@ -856,45 +865,56 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
   const email = document.getElementById("loginEmail").value.trim();
   const password = document.getElementById("loginPass").value;
 
-  const { error } = await sb.auth.signInWithPassword({ email, password });
+  // small UI hint
+  const authState = document.getElementById("authStatus");
+  if(authState) authState.textContent = "Logging in…";
 
-  if (error) {
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){
     alert("Login error: " + error.message);
+    if(authState) authState.textContent = "Not logged in";
     return;
   }
-  // ✅ НЕ покладаємось тільки на onAuthStateChange
-  const { data: { session }, error: sErr } = await sb.auth.getSession();
-  if(sErr) console.error("getSession after login error:", sErr);
 
+  // Fallback: even if onAuthStateChange is slow, update UI right away
+  const { data: { session } } = await sb.auth.getSession();
   currentSession = session;
   setAuthUI(session);
 
-  if(isLoggedIn()){
-    await loadNextWeekFromDB();
-  }
-
   render();
+
+  // load week in background (don’t block UI)
+  if(isLoggedIn()){
+    withTimeout(loadNextWeekFromDB(), 2500)
+      .catch(err => console.warn("loadNextWeekFromDB timeout/error:", err))
+      .finally(() => render());
+  }
 });
+
 
 document.getElementById("btnLogout").addEventListener("click", async (e) => {
   e.preventDefault();
 
-  // 1) пробуємо нормальний signOut
-  try{
-    const { error } = await sb.auth.signOut();
-    if(error) console.warn("signOut error:", error);
-  }catch(err){
-    console.warn("signOut exception:", err);
-  }
-
-  // 2) ✅ FORCE: чистимо локальну auth-сесію у браузері
-  forceClearSupabaseAuth();
-
-  // 3) ✅ FORCE: чистимо UI/стан
+  // instant UI update (even if network is blocked)
   currentSession = null;
   setAuthUI(null);
-  render();
+  try { render(); } catch(_) {}
+
+  // hard clear local auth storage
+  try { forceClearSupabaseAuth(); } catch(_) {}
+
+  // try Supabase signOut, but don't let it hang forever
+  try{
+    await withTimeout(sb.auth.signOut({ scope: "local" }), 1500);
+  }catch(err){
+    console.warn("signOut timeout/error:", err);
+  }
+
+  // final clear + hard reload to ensure app state resets
+  try { forceClearSupabaseAuth(); } catch(_) {}
+  location.reload();
 });
+
 
   
 /** =============================
@@ -2344,44 +2364,43 @@ function autoDownloadSummaryEml(weekStartIso){
  * ============================= */
 
 async function boot(){
-  try{
-    const { data: { session }, error } = await sb.auth.getSession();
-    if(error) console.error("getSession error:", error);
+  // 1) стартова сесія
+  const { data: { session }, error } = await sb.auth.getSession();
+  if(error) console.error("getSession error:", error);
 
-    currentSession = session;
-    setAuthUI(session);
+  currentSession = session;
+  setAuthUI(session);
 
-    if(isLoggedIn()){
-      await loadNextWeekFromDB();
-    }
+  // 2) перший рендер — не блокуємо UI мережевими запитами
+  render();
 
-    render();
-  }catch(e){
-    alert("BOOT ERROR: " + (e?.message || e));
-    console.error(e);
+  // 3) якщо залогінені — підтягуємо nextWeek з БД у фоні й робимо повторний render
+  if(isLoggedIn()){
+    withTimeout(loadNextWeekFromDB(), 2500)
+      .catch(err => console.warn("loadNextWeekFromDB timeout/error:", err))
+      .finally(() => render());
   }
 }
 
-
+// 4) один listener на зміну auth-стану
 sb.auth.onAuthStateChange(async (_event, session) => {
-  try{
-    currentSession = session;
-    setAuthUI(session);
+  currentSession = session;
+  setAuthUI(session);
 
-    if(isLoggedIn()){
-      await loadNextWeekFromDB();
-    }
+  // швидко перемалюємо UI
+  render();
 
-    render();
-  }catch(e){
-    alert("AUTH CHANGE ERROR: " + (e?.message || e));
-    console.error(e);
+  // і потім (за потреби) підтягнемо дані з БД
+  if(isLoggedIn()){
+    withTimeout(loadNextWeekFromDB(), 2500)
+      .catch(err => console.warn("loadNextWeekFromDB timeout/error:", err))
+      .finally(() => render());
   }
 });
 
-
 // 5) запускаємо boot ОДИН раз
 boot();
+
 
 
 </script>
