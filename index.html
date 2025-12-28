@@ -1483,7 +1483,7 @@ function renderManagerControls(){
   if(!host) return;
 
   const me = currentUser();
-  if(!me || me.role !== "manager"){
+if(!isLoggedIn() || !me || me.role !== "manager"){
     host.innerHTML = "";
     return;
   }
@@ -1781,6 +1781,10 @@ function countPendingWeek(weekStartIso){
  * 8) Planning logic (NEXT week only)
  * ============================= */
 async function handleSetMode(weekStartIso, dateIso, desiredMode){
+  if(!isLoggedIn()){
+    alert("Увійди (Login), щоб планувати next week.");
+    return;
+  }
   const me = currentUser();
   if(me.role === "manager") return alert("Керівник не бронює. Лише approve.");
   const w = getWeek(weekStartIso);
