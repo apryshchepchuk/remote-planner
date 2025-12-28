@@ -801,25 +801,6 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   
 let currentSession = null;
 
-let myProfile = null;           // row from public.profiles for current user
-let allProfiles = [];           // cached profiles list (team)
-let profilesById = {};          // id -> profile
-let profilesByEmail = {};       // email(lower) -> profile
-
-function isManagerSession(){
-  return !!myProfile && myProfile.role === "manager";
-}
-
-function profileNameById(id){
-  const p = profilesById[id];
-  return p?.full_name || p?.email || id || "";
-}
-function profileEmailById(id){
-  const p = profilesById[id];
-  return p?.email || "";
-}
-
-
 
 // === Realtime conflict control (nextWeek only) ===
 // Goal: prevent "last write wins" overwrites when several users edit simultaneously.
@@ -987,14 +968,6 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
   currentSession = session;
   setAuthUI(session);
 
-  // profiles for role + names
-  myProfile = null;
-  allProfiles = []; profilesById = {}; profilesByEmail = {};
-  if(isLoggedIn()){
-    myProfile = await loadMyProfile();
-    await loadAllProfiles();
-  }
-
   
   // realtime only for authenticated users
   if(isLoggedIn()) startRealtimeForNextWeek();
@@ -1109,27 +1082,36 @@ async function loadMyProfile(){
   return data;
 }
 
-async function loadAllProfiles(){
-  // Load small team directory from public.profiles (RLS should allow authenticated SELECT)
+// =============================
+// Profiles cache (for owner names)
+// =============================
+let PROFILES = [];
+let PROFILE_BY_ID = {};
+
+async function refreshProfilesCache(){
+  // не блокуємо роботу застосунку, якщо profiles недоступні
   const { data, error } = await sb
     .from("profiles")
-    .select("id,email,full_name,role")
-    .order("full_name", { ascending: true });
+    .select("id,email,full_name,role");
 
   if(error){
-    console.error("loadAllProfiles error:", error);
-    return [];
+    console.warn("refreshProfilesCache error:", error);
+    PROFILES = [];
+    PROFILE_BY_ID = {};
+    return;
   }
 
-  allProfiles = data || [];
-  profilesById = {};
-  profilesByEmail = {};
-  for(const p of allProfiles){
-    profilesById[p.id] = p;
-    if(p.email) profilesByEmail[String(p.email).toLowerCase()] = p;
-  }
-  return allProfiles;
+  PROFILES = data || [];
+  PROFILE_BY_ID = {};
+  PROFILES.forEach(p => { PROFILE_BY_ID[p.id] = p; });
 }
+
+function profileLabel(id){
+  if(!id) return "";
+  const p = PROFILE_BY_ID[id];
+  return p?.full_name || p?.email || (String(id).slice(0,8) + "…");
+}
+
 
 function weekToRow(weekStartIso){
   const w = getWeek(weekStartIso);
@@ -1145,11 +1127,11 @@ function weekToRow(weekStartIso){
   };
 }
 
-
 function rowToWeek(row){
   return {
     status: row.status || "draft",
-    approvedBy: row.approved_by || null,     // UUID from profiles/auth
+    // ✅ тепер зберігаємо реальний owner (uuid з profiles/auth.users)
+    approvedBy: row.approved_by || null,
     approvedAt: row.approved_at || null,
     reservations: row.reservations || {},
     dayOff: row.day_off || {},
@@ -1158,7 +1140,6 @@ function rowToWeek(row){
     dayMeta: {},
   };
 }
-
 
 async function loadNextWeekFromDB(){
   if(!isLoggedIn()) return;
@@ -1322,11 +1303,583 @@ function isDayOff(weekStartIso, dateIso){
 }
 
 function toggleDayOff(weekStartIso, dateIso){
-  if(!isManagerSession()) return alert("Лише керівник може ставити вихідний день.");
+  const me = currentUser();
+  if(me.role !== "manager") return alert("Лише керівник може ставити вихідний день.");
   const w = getWeek(weekStartIso);
   if(!w.dayOff) w.dayOff = {};
   w.dayOff[dateIso] = !w.dayOff[dateIso];
   saveState();
+}
+
+function canManagerOverride(weekStartIso){
+  const me = currentUser();
+  if(!me || me.role !== "manager") return false;
+
+  const w = getWeek(weekStartIso);
+  // override тільки до approve і до lock
+  if(w.status === "approved" || w.status === "locked") return false;
+
+  return true;
+}
+
+function setManagerOverride(weekStartIso, dateIso, userId, newMode){
+  if(!canManagerOverride(weekStartIso)) return alert("Override доступний керівнику лише ДО Approve.");
+
+  const w = getWeek(weekStartIso);
+  if(!w.reservations[dateIso]) w.reservations[dateIso] = {};
+  if(!w.overrides) w.overrides = {};
+  if(!w.overrides[dateIso]) w.overrides[dateIso] = {};
+
+  const before = w.reservations[dateIso][userId] || "office";
+  const after  = newMode;
+
+  // якщо нічого не змінюємо — виходимо
+  if(before === after) return;
+
+  const me = currentUser();
+  const note = prompt("Причина (коротко). Можна залишити порожнім:", "") || "";
+
+  // ставимо режим
+  w.reservations[dateIso][userId] = after;
+
+  // фіксуємо override
+  w.overrides[dateIso][userId] = {
+    by: me.id,
+    at: Date.now(),
+    from: before,
+    to: after,
+    note
+  };
+
+  saveState();
+}
+
+function formatModeUA(mode){
+  if(mode === "remote") return "Remote";
+  if(mode === "remote_pending") return "Remote (OK?)";
+  if(mode === "vacation") return "Відпустка";
+  return "Office";
+}
+
+
+/** =============================
+ * 3) Compute week keys: current + next
+ * ============================= */
+const thisWeekStart = isoDate(mondayOf(new Date()));
+const nextWeekStart = isoDate(addDays(new Date(thisWeekStart), 7));
+getWeek(thisWeekStart);
+getWeek(nextWeekStart);
+ensureMonthlyTokens();
+localStorage.setItem(LS_KEY, JSON.stringify(state));
+
+/** =============================
+ * 4) UI init
+ * ============================= */
+const meSel = document.getElementById("me");
+TEAM.forEach(u => {
+  const opt = document.createElement("option");
+  opt.value = u.id;
+  opt.textContent = `${u.name}${u.role==="manager" ? " 👑" : ""}`;
+  meSel.appendChild(opt);
+});
+meSel.value = TEAM[0].id;
+meSel.onchange = () => render();
+
+const tabNext = document.getElementById("tabNext");
+const tabThis = document.getElementById("tabThis");
+const paneNext = document.getElementById("paneNext");
+const paneThis = document.getElementById("paneThis");
+
+// дефолт — next
+function setTab(which){
+  const isNext = which === "next";
+  tabNext.classList.toggle("active", isNext);
+  tabThis.classList.toggle("active", !isNext);
+  paneNext.classList.toggle("active", isNext);
+  paneThis.classList.toggle("active", !isNext);
+}
+tabNext.onclick = () => setTab("next");
+tabThis.onclick = () => setTab("this");
+setTab("next");
+
+
+document.getElementById("btnReset").onclick = () => {
+  localStorage.removeItem(LS_KEY);
+  state = defaultState();
+  getWeek(thisWeekStart);
+  getWeek(nextWeekStart);
+  ensureMonthlyTokens();
+  saveState();
+};
+
+const btnICS = document.getElementById("btnICS");
+if(btnICS){
+  btnICS.onclick = () => {
+    // (залишено на випадок якщо колись повернеш кнопку)
+    const me = currentUser();
+    if(me.role === "manager"){
+      alert("Експорт .ics доступний лише для працівників.");
+      return;
+    }
+    const ics = buildICSForUser(me.id);
+    downloadText(`remote_${me.name}_${thisWeekStart}.ics`, ics, "text/calendar");
+  };
+}
+
+
+/** =============================
+ * 5) Counters
+ * ============================= */
+function countRemoteDay(weekStartIso, dateIso){
+  const w = getWeek(weekStartIso);
+  const day = w.reservations[dateIso] || {};
+  return Object.values(day).filter(v => v === "remote" || v === "remote_pending").length;
+}
+function countMyRemoteDays(weekStartIso, userId){
+  const w = getWeek(weekStartIso);
+  let c = 0;
+  const ws = new Date(weekStartIso);
+  for(let i=0;i<5;i++){
+    const dIso = isoDate(addDays(ws,i));
+    const day = w.reservations[dIso] || {};
+    const v = day[userId];
+    if(v === "remote" || v === "remote_pending") c++;
+  }
+  return c;
+}
+function hasPendingInDay(weekStartIso, dateIso){
+  const w = getWeek(weekStartIso);
+  const day = w.reservations[dateIso] || {};
+  return Object.values(day).some(v => v === "remote_pending");
+}
+function currentUser(){ return TEAM.find(u => u.id === meSel.value); }
+
+function winRate(uid){
+  const s = state.stats?.[uid] || { w:0, l:0 };
+  const total = s.w + s.l;
+  return total ? (s.w / total) : 0.5; // якщо історії нема — 50/50
+}
+
+function getDayMeta(weekStartIso, dateIso){
+  const w = getWeek(weekStartIso);
+  if(!w.dayMeta) w.dayMeta = {};
+  if(!w.dayMeta[dateIso]) w.dayMeta[dateIso] = { ts:{} };
+  if(!w.dayMeta[dateIso].ts) w.dayMeta[dateIso].ts = {};
+  return w.dayMeta[dateIso];
+}
+
+/**
+ * Ймовірність перемоги challenger проти defender.
+ * Логіка: якщо defender "сильніший" (частіше вигравав),
+ * то challenger отримує бонус. Межі 20%..80%.
+ */
+function fairnessProb(challengerId, defenderId){
+  const cr = winRate(challengerId);
+  const dr = winRate(defenderId);
+
+  let p = 0.5 + (dr - cr) * 0.30;
+  p = Math.max(0.20, Math.min(0.80, p));
+  return p;
+}
+
+function bumpStats(winnerId, loserId){
+  if(!state.stats) state.stats = {};
+  if(!state.stats[winnerId]) state.stats[winnerId] = { w:0, l:0 };
+  if(!state.stats[loserId])  state.stats[loserId]  = { w:0, l:0 };
+  state.stats[winnerId].w++;
+  state.stats[loserId].l++;
+}
+
+
+function pickDefender(weekStartIso, dateIso){
+  const w = getWeek(weekStartIso);
+  const day = w.reservations[dateIso] || {};
+  const meta = (w.dayMeta && w.dayMeta[dateIso] && w.dayMeta[dateIso].ts) ? w.dayMeta[dateIso].ts : {};
+
+  const defenders = Object.entries(day)
+    .filter(([uid, mode]) => mode === "remote" || mode === "remote_pending")
+    .map(([uid]) => uid);
+
+  if(defenders.length === 0) return null;
+
+  // найраніший timestamp = "перший зайняв" = defender
+  defenders.sort((a,b) => (meta[a] || 0) - (meta[b] || 0));
+  return defenders[0];
+}
+
+/** =============================
+ * 6) Conflict resolver (Token / Fairness)
+ * ============================= */
+const modalBackdrop = document.getElementById("modalBackdrop");
+const modalTitle = document.getElementById("modalTitle");
+const modalBody = document.getElementById("modalBody");
+document.getElementById("modalClose").onclick = () => closeModal(null);
+
+const btnUseToken = document.getElementById("btnUseToken");
+const btnFairRoll = document.getElementById("btnFairRoll");
+
+let modalResolver = null;
+
+function openModal(){
+  modalBackdrop.style.display = "flex";
+
+  const modal = modalBackdrop.querySelector(".modal");
+  if(!modal) return;
+
+  requestAnimationFrame(() => {
+    modal.style.animation = "none";
+    modal.offsetHeight; // reflow
+    modal.style.animation = "pop 180ms ease both";
+  });
+}
+
+function closeModal(result){
+  modalBackdrop.style.display = "none";
+  if(modalResolver) modalResolver(result);
+  modalResolver = null;
+}
+
+// Маленькі хелпери UI
+function setModalButtonsEnabled(enabled){
+  btnUseToken.disabled = !enabled || btnUseToken.dataset.forceDisabled === "1";
+  btnFairRoll.disabled = !enabled;
+}
+function setUseTokenAvailability(canUse){
+  btnUseToken.dataset.forceDisabled = canUse ? "0" : "1";
+  btnUseToken.disabled = !canUse;
+}
+
+function showModalWorking(html){
+  // заблокуємо кнопки, щоб не натискали двічі
+  setModalButtonsEnabled(false);
+  modalBody.innerHTML += `
+    <div class="hr"></div>
+    <div>${html}</div>
+  `;
+}
+
+function showModalFinal({ ok, challengerName, defenderName, dateIso, method }){
+  const color = ok ? "var(--ok)" : "var(--bad)";
+  const icon  = ok ? "✅" : "❌";
+  const title = ok ? "Перемога!" : "Поразка";
+
+  modalBody.innerHTML += `
+    <div class="hr"></div>
+    <div style="font-weight:800; color:${color}; font-size:15px;
+                display:flex; gap:8px; align-items:center;">
+      <span>${icon}</span>
+      <span>${title}</span>
+      <span style="font-weight:600; color: var(--muted); font-size:12px;">
+        (${method})
+      </span>
+    </div>
+    <div class="muted" style="margin-top:8px; line-height:1.4;">
+      ${
+        ok
+          ? `${challengerName} отримує 🏠 Remote на <b>${dateIso}</b>.<br/>
+             ${defenderName} переходить на 🏢 Office.`
+          : `${challengerName} не отримує Remote на <b>${dateIso}</b>.<br/>
+             ${defenderName} зберігає 🏠 Remote.`
+      }
+    </div>
+    <div class="muted small" style="margin-top:10px;">
+      Закрий вікно, щоб продовжити
+    </div>
+  `;
+}
+
+/**
+ * Показує модалку і повертає об'єкт рішення:
+ * { type: "token" } або { type: "fair", ok: boolean, p: number }
+ * (а “переміг/програв” показується тут же у модалці)
+ */
+async function conflictModal({ weekStartIso, dateIso, challenger, defender }){
+  ensureMonthlyTokens();
+
+  // відновлюємо стан кнопок на старті
+  btnFairRoll.disabled = false;
+  btnUseToken.disabled = false;
+  btnUseToken.dataset.forceDisabled = "0";
+
+  const myTok = (state.tokens && state.tokens[challenger.id] != null) ? state.tokens[challenger.id] : 0;
+  const p = fairnessProb(challenger.id, defender.id);
+
+  modalTitle.textContent = `⚖️ Конфлікт за Remote: ${dateIso}`;
+  modalBody.innerHTML = `
+    <div><b>Претендент:</b> ${challenger.name}</div>
+    <div><b>Захисник слоту:</b> ${defender.name}</div>
+    <div class="hr"></div>
+    <div class="muted">
+      🎟️ Токени претендента: <b>${myTok}/1</b> (токен = гарантована перемога).
+      <br/>⚖️ Fairness roll: шанс претендента ≈ <b>${Math.round(p*100)}%</b>.
+    </div>
+  `;
+
+  setUseTokenAvailability(myTok > 0);
+  setModalButtonsEnabled(true);
+  openModal();
+
+  // Повертаємо Promise, який резолвиться коли користувач зробить вибір
+  const choice = await new Promise(resolve => {
+    modalResolver = resolve;
+
+    btnUseToken.onclick = () => resolve("token");
+    btnFairRoll.onclick = () => resolve("fair");
+  });
+
+  // якщо користувач закрив модалку хрестиком
+  if(choice == null){
+    closeModal(null);
+    return null;
+  }
+
+  if(choice === "token"){
+    showModalWorking(`<b>🎟️ Токен використано.</b> Remote буде за претендентом.`);
+    // "token" завжди ok=true
+    showModalFinal({
+      ok: true,
+      challengerName: challenger.name,
+      defenderName: defender.name,
+      dateIso,
+      method: "token"
+    });
+    return { type:"token" };
+  }
+
+  // fairness
+  showModalWorking(`<b>⚖️ Fairness roll…</b> Рахую результат.`);
+  const ok = (Math.random() < p);
+
+  showModalFinal({
+    ok,
+    challengerName: challenger.name,
+    defenderName: defender.name,
+    dateIso,
+    method: `fairness ${Math.round(p*100)}%`
+  });
+
+  return { type:"fair", ok, p };
+}
+
+/** =============================
+ * 7) Rendering
+ * ============================= */
+function render(){
+  ensureMonthlyTokens();
+
+renderManagerControls();
+
+  // top counters for NEXT week only (planning)
+  const me = currentUser();
+// hide personal counters for manager
+  const isMgr = me.role === "manager";
+  document.querySelectorAll(".onlyEmployee").forEach(el => {
+    el.classList.toggle("hidden", isMgr);
+  });
+  const myId = me.id;
+
+  const myRemoteNext = (me.role === "manager") ? 0 : countMyRemoteDays(nextWeekStart, myId);
+  const remoteEl = document.getElementById("myRemoteCount");
+  remoteEl.textContent = `${myRemoteNext}/2`;
+  remoteEl.className = "pill my-remote" + (myRemoteNext > 2 ? " warn" : "");
+
+  const myTok = (state.tokens && state.tokens[myId] != null) ? state.tokens[myId] : 0;
+  document.getElementById("myTokens").textContent = `${myTok}/1`;
+
+  // render weeks
+  renderWeekCard("thisWeekCard", thisWeekStart, true);   // read-only for users
+  renderWeekCard("nextWeekCard", nextWeekStart, false);  // editable for employees (unless locked)
+
+notifyOverridesForMe(nextWeekStart);
+}
+
+function renderManagerControls(){
+  const host = document.getElementById("mgrControls");
+  if(!host) return;
+
+  const me = currentUser();
+if(!isLoggedIn() || !me || me.role !== "manager"){
+    host.innerHTML = "";
+    return;
+  }
+
+  // керівник керує next week
+  const w = getWeek(nextWeekStart);
+  const approved = (w.status === "approved");
+
+  host.innerHTML = `
+    <button id="mgrApprove" class="ok" ${approved ? "disabled" : ""}>Approve week</button>
+  `;
+
+  const btnApprove = document.getElementById("mgrApprove");
+
+  if(btnApprove){
+    btnApprove.onclick = () => {
+      const prevStatus = w.status;
+
+      // approve тільки 1 раз: лише з draft
+      if(prevStatus !== "draft"){
+        alert("Тиждень вже погоджено або не в статусі draft. Повторний approve не потрібен.");
+        return;
+      }
+
+      // ✅ approve exceptions тепер вбудований: remote_pending -> remote
+      const ws = new Date(nextWeekStart);
+      for(let i=0;i<5;i++){
+        const dIso = isoDate(addDays(ws,i));
+        const day = w.reservations?.[dIso] || {};
+        for(const uid of Object.keys(day)){
+          if(day[uid] === "remote_pending") day[uid] = "remote";
+        }
+        // якщо об’єкта дня не було — не створюємо, щоб не засмічувати
+      }
+
+      // ✅ фінальний approve: після цього змін не допускаємо
+      w.status = "approved";
+      w.approvedBy = currentSession?.user?.id || null;
+      w.approvedAt = new Date().toISOString();
+      saveState();
+
+      // ✅ summary .eml тільки при draft → approved
+      try{
+        autoDownloadSummaryEml(nextWeekStart);
+      }catch(e){
+        console.error(e);
+        alert("Не вдалося згенерувати summary .eml. Перевір email-и в TEAM та Console.");
+      }
+    };
+  }
+}
+
+function renderWeekCard(containerId, weekStartIso, isCurrentWeek){
+  const container = document.getElementById(containerId);
+  const w = getWeek(weekStartIso);
+  const me = currentUser();
+
+const editable =
+  isLoggedIn() &&
+  (!isCurrentWeek) &&
+  (w.status !== "approved") &&
+  (me.role !== "manager");
+
+
+  // ТІЛЬКИ грід (без шапки/рамки/текстів)
+  container.innerHTML = `
+    <div class="grid" id="${containerId}_grid"></div>
+  `;
+
+  const grid = document.getElementById(`${containerId}_grid`);
+  grid.innerHTML = "";
+
+  const ws = new Date(weekStartIso);
+
+  for(let i=0;i<5;i++){
+    const date = addDays(ws, i);
+    const dIso = isoDate(date);
+
+    const dayBox = document.createElement("div");
+    dayBox.className = "day";
+
+    const day = w.reservations?.[dIso] || {};
+    const remoteCount = Object.values(day).filter(v => v === "remote" || v === "remote_pending").length;
+
+    if(remoteCount >= LIMIT_REMOTE_PER_DAY) dayBox.classList.add("remote-full");
+    if(day[me.id] === "remote") dayBox.classList.add("is-me-remote");
+    if(hasPendingInDay(weekStartIso, dIso)) dayBox.classList.add("has-pending");
+
+    const dateLabel = date.toLocaleDateString("uk-UA", { day:"2-digit", month:"2-digit" });
+    let dow = date.toLocaleDateString("uk-UA", { weekday:"long" });
+    dow = dow.charAt(0).toUpperCase() + dow.slice(1);
+
+const meUser = currentUser();
+const isMgr = meUser.role === "manager";
+const dayOff = isDayOff(weekStartIso, dIso);
+if(dayOff) dayBox.classList.add("dayoff");
+
+dayBox.innerHTML = `
+  <div class="topline">
+    <div class="date">${dateLabel}</div>
+
+    <div class="remoteMeta">
+      <div class="remoteLabel">
+        <b>${dow}</b>
+        ${dayOff ? `<span class="pill" style="padding:2px 8px;">🎉 Вихідний</span>` : ``}
+      </div>
+
+${(!isCurrentWeek && isMgr) ? `
+  <button class="dayActionBtn" data-act="dayoff" data-date="${dIso}"
+          title="${dayOff ? "Скасувати вихідний" : "Зробити день вихідним"}">
+    ${dayOff ? "✖️" : "🎉"} <span>${dayOff ? "Скасувати" : "Вихідний"}</span>
+  </button>
+` : ``}
+    </div>
+  </div>
+
+  <div class="slots">${renderSlots(weekStartIso, dIso)}</div>
+
+  ${(!isCurrentWeek) ? `<div class="hr"></div>` : ``}
+
+  ${(!isCurrentWeek) ? `
+<div class="controls">
+  <button class="primary iconBtn" data-act="remote" data-date="${dIso}" title="Remote" ${(!editable ? "disabled" : "")}>
+    <span class="btnIcon">🏠</span><span class="btnText">Remote</span>
+  </button>
+
+  <button class="iconBtn" data-act="office" data-date="${dIso}" title="Office" ${(!editable ? "disabled" : "")}>
+    <span class="btnIcon">🏢</span><span class="btnText">Office</span>
+  </button>
+
+  <button class="iconBtn" data-act="vacation" data-date="${dIso}" title="Відпустка" ${(!editable ? "disabled" : "")}>
+    <span class="btnIcon">🏖️</span><span class="btnText">Відпустка</span>
+  </button>
+</div>
+  ` : ``}
+`;
+
+    grid.appendChild(dayBox);
+  }
+
+if(!isCurrentWeek){
+  grid.querySelectorAll("button[data-act]").forEach(btn=>{
+    btn.onclick = (e) => {
+      e.stopPropagation();
+
+      const act = btn.dataset.act;
+      const d = btn.dataset.date;
+
+      if(act === "dayoff"){
+        toggleDayOff(weekStartIso, d);
+        return;
+      }
+
+      if(act === "mgrMenu"){
+        const key = `${btn.dataset.date}_${btn.dataset.uid}`;
+        // закриваємо всі інші
+        grid.querySelectorAll(".mgrPopover.open").forEach(p=>p.classList.remove("open"));
+        // відкриваємо потрібний
+        const pop = grid.querySelector(`.mgrPopover[data-pop="${key}"]`);
+        if(pop) pop.classList.toggle("open");
+        return;
+      }
+
+if(act === "mgrSet"){
+  const uid = btn.dataset.uid;
+  const mode = btn.dataset.mode;
+  setManagerOverride(weekStartIso, d, uid, mode);
+
+  // закриваємо меню після вибору
+  grid.querySelectorAll(".mgrPopover.open").forEach(p=>p.classList.remove("open"));
+  return;
+}
+      handleSetMode(weekStartIso, d, act);
+    };
+  });
+
+  // клік поза слотами закриває всі поповери
+  grid.onclick = () => {
+    grid.querySelectorAll(".mgrPopover.open").forEach(p=>p.classList.remove("open"));
+  };
+}
 }
 
 function notifyOverridesForMe(weekStartIso){
@@ -1343,7 +1896,7 @@ function notifyOverridesForMe(weekStartIso){
   for(const [dateIso, byUsers] of Object.entries(w.overrides)){
     const ov = byUsers[me.id];
     if(ov && ov.at > lastSeen){
-      const byName = profileNameById(ov.by) || "керівник";
+      const byName = TEAM.find(x=>x.id===ov.by)?.name || "керівник";
       hits.push(`${dateIso}: ${formatModeUA(ov.from)} → ${formatModeUA(ov.to)} (керівник: ${byName})`);
     }
   }
@@ -1371,8 +1924,8 @@ function renderSlots(weekStartIso, dateIso){
   }
 
   const meUser = currentUser();
-  const isMgr = isManagerSession();
-  const canOverride = isManagerSession() && canManagerOverride(weekStartIso);
+  const isMgr = meUser.role === "manager";
+  const canOverride = isMgr && canManagerOverride(weekStartIso);
   const ovDay = (w.overrides && w.overrides[dateIso]) ? w.overrides[dateIso] : {};
 
   return TEAM.filter(u=>u.role!=="manager").map(u=>{
@@ -1381,7 +1934,7 @@ function renderSlots(weekStartIso, dateIso){
     // override info (якщо був) — ДЛЯ ЦЬОГО ЮЗЕРА
     const ov = ovDay[u.id];
     const ovText = ov
-      ? `Змінено керівником: ${profileNameById(ov.by) || "керівник"} · ` +
+      ? `Змінено керівником: ${TEAM.find(x=>x.id===ov.by)?.name || "керівник"} · ` +
         `${new Date(ov.at).toLocaleString("uk-UA")} · ` +
         `${formatModeUA(ov.from)} → ${formatModeUA(ov.to)}` +
         `${ov.note ? " · " + ov.note : ""}`
@@ -1448,7 +2001,7 @@ async function handleSetMode(weekStartIso, dateIso, desiredMode){
     return;
   }
   const me = currentUser();
-  if(isManagerSession()) return alert("Керівник не бронює. Лише approve.");
+  if(me.role === "manager") return alert("Керівник не бронює. Лише approve.");
   const w = getWeek(weekStartIso);
 if(w.status === "approved") return alert("Тиждень уже затверджено керівником. Зміни неможливі.");
 
@@ -1786,10 +2339,10 @@ function buildSummaryPlainText(weekStartIso){
 
   const employees = TEAM.filter(u=>u.role!=="manager");
 
-  const approver = (w.approvedBy ? profilesById[w.approvedBy] : null);
+  const approver = (w.approvedBy ? (PROFILE_BY_ID[w.approvedBy] || null) : null);
   const approvedAt = w.approvedAt ? new Date(w.approvedAt) : null;
   const approvedLine = (approver && approvedAt)
-    ? `Погоджено: ${approver.full_name || approver.email || approver.id}, ${approvedAt.toLocaleString("uk-UA")}`
+    ? `Погоджено: ${approver.full_name || approver.email || "керівник"}, ${approvedAt.toLocaleString("uk-UA")}`
     : "";
 
   let out = "";
@@ -1878,10 +2431,10 @@ function buildSummaryHtmlTable_NoIcons(weekStartIso){
   }).join("");
 
   const range = `${dates[0].label} – ${dates[4].label}`;
-  const approver = (w.approvedBy ? profilesById[w.approvedBy] : null);
+  const approver = (w.approvedBy ? (PROFILE_BY_ID[w.approvedBy] || null) : null);
   const approvedAt = w.approvedAt ? new Date(w.approvedAt) : null;
   const approvedLine = (approver && approvedAt)
-    ? `Погоджено: <b>${approver.full_name || approver.email || approver.id}</b>, ${approvedAt.toLocaleString("uk-UA", { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" })}`
+    ? `Погоджено: <b>${approver.full_name || approver.email || "керівник"}</b>, ${approvedAt.toLocaleString("uk-UA", { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" })}`
     : "";
 
   return `
@@ -1903,14 +2456,16 @@ function buildSummaryHtmlTable_NoIcons(weekStartIso){
 function autoDownloadSummaryEml(weekStartIso){
   const w = getWeek(weekStartIso);
 
-  // sender = поточний користувач (керівник)
-  const senderName  = myProfile?.full_name || currentSession?.user?.email || "Manager";
-  const senderEmail = myProfile?.email || currentSession?.user?.email || "manager@domain.ua";
+  // sender = керівник (approvedBy) або дефолтний менеджер
+  const mgrProfile = w.approvedBy ? (PROFILE_BY_ID[w.approvedBy] || null) : null;
+  const mgr = TEAM.find(u => u.role==="manager");
+  const senderName  = mgrProfile?.full_name || mgrProfile?.email || mgr?.name || "Manager";
+  const senderEmail = mgrProfile?.email || EMAILS[mgr?.id] || "manager@domain.ua";
 
-  // recipients = всі працівники з profiles (role != manager)
-  const recipients = (allProfiles || [])
-    .filter(p => (p.role || "employee") !== "manager")
-    .map(p => ({ name: p.full_name || p.email, email: p.email }))
+  // recipients = всі працівники (employees)
+  const recipients = TEAM
+    .filter(u => u.role !== "manager")
+    .map(u => ({ name: u.name, email: EMAILS[u.id] }))
     .filter(x => !!x.email);
 
   // subject + htmlBody
@@ -1931,7 +2486,6 @@ function autoDownloadSummaryEml(weekStartIso){
 
   downloadText(`summary_${weekStartIso}.eml`, eml, "message/rfc822");
 }
-
 
 
 /** =============================
@@ -2040,14 +2594,6 @@ async function boot(){
   currentSession = session;
   setAuthUI(session);
 
-  // profiles for role + names
-  myProfile = null;
-  allProfiles = []; profilesById = {}; profilesByEmail = {};
-  if(isLoggedIn()){
-    myProfile = await loadMyProfile();
-    await loadAllProfiles();
-  }
-
   
   if(isLoggedIn()) startRealtimeForNextWeek();
   else stopRealtime();
@@ -2066,14 +2612,6 @@ async function boot(){
 sb.auth.onAuthStateChange(async (_event, session) => {
   currentSession = session;
   setAuthUI(session);
-
-  // profiles for role + names
-  myProfile = null;
-  allProfiles = []; profilesById = {}; profilesByEmail = {};
-  if(isLoggedIn()){
-    myProfile = await loadMyProfile();
-    await loadAllProfiles();
-  }
 
   // швидко перемалюємо UI
   render();
