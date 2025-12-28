@@ -1328,16 +1328,6 @@ function toggleDayOff(weekStartIso, dateIso){
   w.dayOff[dateIso] = !w.dayOff[dateIso];
   saveState();
 }
-      handleSetMode(weekStartIso, d, act);
-    };
-  });
-
-  // клік поза слотами закриває всі поповери
-  grid.onclick = () => {
-    grid.querySelectorAll(".mgrPopover.open").forEach(p=>p.classList.remove("open"));
-  };
-}
-}
 
 function notifyOverridesForMe(weekStartIso){
   const me = currentUser();
