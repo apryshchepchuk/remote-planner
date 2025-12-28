@@ -832,6 +832,24 @@ function setAuthUI(session){
       : "Not logged in";
   }
 }
+
+  function supabaseRef(){
+  // https://xxxx.supabase.co -> xxxx
+  try { return new URL(SUPABASE_URL).hostname.split(".")[0]; }
+  catch { return null; }
+}
+
+function forceClearSupabaseAuth(){
+  const ref = supabaseRef();
+  if(!ref) return;
+
+  const prefix = `sb-${ref}-`;
+  // прибираємо всі ключі, які створює supabase-js auth
+  for(const k of Object.keys(localStorage)){
+    if(k.startsWith(prefix)) localStorage.removeItem(k);
+  }
+}
+
 document.getElementById("btnLogin").addEventListener("click", async (e) => {
   e.preventDefault();
 
@@ -844,30 +862,38 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
     alert("Login error: " + error.message);
     return;
   }
+  // ✅ НЕ покладаємось тільки на onAuthStateChange
+  const { data: { session }, error: sErr } = await sb.auth.getSession();
+  if(sErr) console.error("getSession after login error:", sErr);
 
+  currentSession = session;
+  setAuthUI(session);
+
+  if(isLoggedIn()){
+    await loadNextWeekFromDB();
+  }
+
+  render();
 });
 
 document.getElementById("btnLogout").addEventListener("click", async (e) => {
   e.preventDefault();
 
-  try {
+  // 1) пробуємо нормальний signOut
+  try{
     const { error } = await sb.auth.signOut();
-    if (error) {
-      alert("Logout error: " + error.message);
-      return;
-    }
-
-    currentSession = null;
-    setAuthUI(null);
-    render();
-
-    // 🧨 на GitHub Pages / mobile це РЕАЛЬНО рятує
-    location.reload();
-
-  } catch (err) {
-    alert("Logout failed: " + (err?.message || err));
-    console.error(err);
+    if(error) console.warn("signOut error:", error);
+  }catch(err){
+    console.warn("signOut exception:", err);
   }
+
+  // 2) ✅ FORCE: чистимо локальну auth-сесію у браузері
+  forceClearSupabaseAuth();
+
+  // 3) ✅ FORCE: чистимо UI/стан
+  currentSession = null;
+  setAuthUI(null);
+  render();
 });
 
   
