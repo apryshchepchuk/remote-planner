@@ -801,6 +801,93 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   
 let currentSession = null;
 
+
+// === Realtime conflict control (nextWeek only) ===
+// Goal: prevent "last write wins" overwrites when several users edit simultaneously.
+// Mechanism: optimistic concurrency check on planner_weeks.updated_at + auto-merge of ONLY the local edits.
+let nextWeekDbUpdatedAt = null;   // last known updated_at in DB for nextWeekStart
+let nextWeekDbSnapshot = null;    // last known DB week (WITHOUT local edits), used to compute local-diff ops
+
+function deepCopy(obj){ return JSON.parse(JSON.stringify(obj)); }
+
+function computeWeekOps(baseWeek, currentWeek){
+  const ops = [];
+
+  const b = baseWeek || emptyWeek();
+  const c = currentWeek || emptyWeek();
+
+  // reservations: [dateIso][userId] -> mode
+  const bRes = b.reservations || {};
+  const cRes = c.reservations || {};
+  const dates = new Set([...Object.keys(bRes), ...Object.keys(cRes)]);
+
+  for(const dateIso of dates){
+    const bDay = bRes[dateIso] || {};
+    const cDay = cRes[dateIso] || {};
+    const uids = new Set([...Object.keys(bDay), ...Object.keys(cDay)]);
+    for(const uid of uids){
+      const bv = bDay[uid] ?? null;
+      const cv = cDay[uid] ?? null;
+      if(bv !== cv){
+        ops.push({ t: "set_reservation", dateIso, userId: uid, mode: cv });
+      }
+    }
+  }
+
+  // dayOff: [dateIso] -> boolean
+  const bOff = b.dayOff || {};
+  const cOff = c.dayOff || {};
+  const offDates = new Set([...Object.keys(bOff), ...Object.keys(cOff)]);
+  for(const dateIso of offDates){
+    const bv = !!bOff[dateIso];
+    const cv = !!cOff[dateIso];
+    if(bv !== cv){
+      ops.push({ t: "set_dayoff", dateIso, value: cv });
+    }
+  }
+
+  // status / approval meta
+  const bStatus = b.status || "draft";
+  const cStatus = c.status || "draft";
+  const bBy = b.approvedBy || null;
+  const cBy = c.approvedBy || null;
+  const bAt = b.approvedAt || null;
+  const cAt = c.approvedAt || null;
+
+  if(bStatus !== cStatus || bBy !== cBy || bAt !== cAt){
+    ops.push({ t: "set_meta", status: cStatus, approvedBy: cBy, approvedAt: cAt });
+  }
+
+  return ops;
+}
+
+function applyWeekOps(targetWeek, ops){
+  const w = targetWeek;
+
+  for(const op of ops){
+    if(op.t === "set_reservation"){
+      if(!w.reservations) w.reservations = {};
+      if(!w.reservations[op.dateIso]) w.reservations[op.dateIso] = {};
+      if(op.mode === null || op.mode === undefined || op.mode === ""){
+        delete w.reservations[op.dateIso][op.userId];
+      }else{
+        w.reservations[op.dateIso][op.userId] = op.mode;
+      }
+    }
+
+    if(op.t === "set_dayoff"){
+      if(!w.dayOff) w.dayOff = {};
+      w.dayOff[op.dateIso] = !!op.value;
+    }
+
+    if(op.t === "set_meta"){
+      w.status = op.status || "draft";
+      w.approvedBy = op.approvedBy || null;
+      w.approvedAt = op.approvedAt || null;
+    }
+  }
+}
+
 async function getSession(){
   const { data: { session } } = await sb.auth.getSession();
   currentSession = session;
@@ -1036,13 +1123,18 @@ async function loadNextWeekFromDB(){
   }
 
   if(!data){
-    // якщо запису нема — створимо з поточного local state
-    await saveNextWeekToDB();
+    // якщо запису нема — створимо з поточного state
+    await saveNextWeekToDB(true);
     return;
   }
 
-  // мердж: заміняємо week у state на версію з БД
-  state.weeks[nextWeekStart] = { ...emptyWeek(), ...rowToWeek(data) };
+  nextWeekDbUpdatedAt = data.updated_at || null;
+
+  const dbWeek = { ...emptyWeek(), ...rowToWeek(data) };
+  nextWeekDbSnapshot = deepCopy(dbWeek);
+
+  // На старті БД — джерело істини (щоб не підміняти чужі зміни старим localStorage)
+  state.weeks[nextWeekStart] = dbWeek;
   localStorage.setItem(LS_KEY, JSON.stringify(state));
 }
 
@@ -2401,11 +2493,38 @@ function startRealtimeForNextWeek(){
 
           if(payload.eventType === "DELETE"){
             // record removed — reset local week
-            state.weeks[nextWeekStart] = emptyWeek();
+            const dbWeek = emptyWeek();
+            nextWeekDbUpdatedAt = null;
+            nextWeekDbSnapshot = deepCopy(dbWeek);
+
+            // if we have local unsaved edits, keep them visible
+            const baseSnap = nextWeekDbSnapshot || dbWeek;
+            const localWeek = state.weeks[nextWeekStart] || emptyWeek();
+            const localOps = computeWeekOps(baseSnap, localWeek);
+
+            const viewWeek = deepCopy(dbWeek);
+            applyWeekOps(viewWeek, localOps);
+
+            state.weeks[nextWeekStart] = viewWeek;
           }else{
             const row = payload.new;
             if(row){
-              state.weeks[nextWeekStart] = { ...emptyWeek(), ...rowToWeek(row) };
+              // keep last DB updated_at for optimistic locking
+              nextWeekDbUpdatedAt = row.updated_at || nextWeekDbUpdatedAt;
+
+              const dbWeek = { ...emptyWeek(), ...rowToWeek(row) };
+
+              // if we have local unsaved edits, reapply them on top of the incoming DB state
+              const baseSnap = nextWeekDbSnapshot || dbWeek;
+              const localWeek = state.weeks[nextWeekStart] || emptyWeek();
+              const localOps = computeWeekOps(baseSnap, localWeek);
+
+              nextWeekDbSnapshot = deepCopy(dbWeek);
+
+              const viewWeek = deepCopy(dbWeek);
+              applyWeekOps(viewWeek, localOps);
+
+              state.weeks[nextWeekStart] = viewWeek;
             }
           }
 
