@@ -857,7 +857,6 @@ document.getElementById("btnLogout").addEventListener("click", async (e) => {
       return;
     }
 
-    // 🔒 Fallback — якщо onAuthStateChange не спрацює
     currentSession = null;
     setAuthUI(null);
     render();
@@ -882,6 +881,13 @@ const TEAM = [
   { id: "u4", name: "Саша",    role: "employee" },
   { id: "m1", name: "Юлія",    role: "manager" }
 ];
+const EMAILS = {
+  u1: "a.pryshchepchuk@farmak.ua",
+  u2: "V.Olefir@farmak.ua",
+  u3: "a.mashyn@farmak.ua",
+  u4: "o.baksheiev@farmak.ua",
+  m1: "a.pryshchepchuk@farmak.ua"
+};
 
 const LIMIT_REMOTE_PER_DAY = 2;
 const LS_KEY = "hybrid_league_v2";
