@@ -735,7 +735,9 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   <div class="card">
     <div class="row">
       <label class="badge">Я:</label>
-      <select id="me"></select>
+      <select id="me" style="display:none"></select>
+
+      <span id="meName" class="pill" style="display:none;"></span>
 
 <span class="badge onlyEmployee">Мій Remote:</span>
 <span id="myRemoteCount" class="pill my-remote onlyEmployee"></span>
@@ -1009,22 +1011,91 @@ document.getElementById("btnLogout").addEventListener("click", async (e) => {
 
   
 /** =============================
- * 0) Team
+ * 0) Team / roster (from profiles)
+ *  - TEAM будується з таблиці public.profiles (id, email, full_name, role)
+ *  - legacy-мепінг потрібен лише для автоматичної міграції старих даних (u1/u2/...)
  * ============================= */
-const TEAM = [
-  { id: "u1", name: "Антон",   role: "employee" },
-  { id: "u2", name: "Віталій", role: "employee" },
-  { id: "u3", name: "Андрій",  role: "employee" },
-  { id: "u4", name: "Саша",    role: "employee" },
-  { id: "m1", name: "Юлія",    role: "manager" }
-];
-const EMAILS = {
+
+let TEAM = [];      // [{ id (uuid), name, role: "employee"|"manager", email }]
+let EMAILS = {};    // { [uuid]: email }
+
+// ✅ legacy email mapping (для міграції старих ключів у JSON)
+const LEGACY_EMAILS = {
   u1: "a.pryshchepchuk@farmak.ua",
   u2: "V.Olefir@farmak.ua",
   u3: "a.mashyn@farmak.ua",
   u4: "o.baksheiev@farmak.ua",
   m1: "a.pryshchepchuk@farmak.ua"
 };
+
+let LEGACY_ID_MAP = {}; // { u1: <uuid>, ... }
+
+function isUuid(v){
+  return typeof v === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function buildLegacyIdMap(){
+  const map = {};
+  for(const [legacyId, email] of Object.entries(LEGACY_EMAILS)){
+    const p = (PROFILES || []).find(x =>
+      (x.email || "").toLowerCase() === String(email || "").toLowerCase()
+    );
+    if(p?.id) map[legacyId] = p.id;
+  }
+  LEGACY_ID_MAP = map;
+}
+
+function mapUserId(uid){
+  if(!uid) return uid;
+  if(isUuid(uid)) return uid;
+  return LEGACY_ID_MAP[uid] || uid;
+}
+
+function buildTeamFromProfiles(){
+  const list = (PROFILES || []).map(p => {
+    const role = (p.role === "manager") ? "manager" : "employee";
+    return {
+      id: p.id,
+      name: p.full_name || p.email || p.id,
+      role,
+      email: p.email || null
+    };
+  }).filter(x => !!x.id);
+
+  // employees → managers, далі за name
+  list.sort((a,b) => {
+    if(a.role !== b.role) return (a.role === "manager") ? 1 : -1;
+    return String(a.name).localeCompare(String(b.name), "uk", { sensitivity:"base" });
+  });
+
+  TEAM = list;
+
+  EMAILS = {};
+  TEAM.forEach(u => { if(u.email) EMAILS[u.id] = u.email; });
+}
+
+function getUserNameById(uid){
+  return TEAM.find(u => u.id === uid)?.name || PROFILE_BY_ID?.[uid]?.full_name || PROFILE_BY_ID?.[uid]?.email || uid;
+}
+
+function setMeToLoggedInUser(){
+  const meSel = document.getElementById("me");
+  const meName = document.getElementById("meName");
+
+  const uid = currentSession?.user?.id;
+  if(!uid) return;
+
+  if(meSel){
+    meSel.value = uid;
+    meSel.disabled = true;
+    meSel.style.display = "none"; // ✅ прибираємо вибір після логіну
+  }
+  if(meName){
+    meName.textContent = getUserNameById(uid);
+    meName.style.display = "inline-flex";
+  }
+}
 
 const LIMIT_REMOTE_PER_DAY = 2;
 const LS_KEY = "hybrid_league_v2";
@@ -1034,6 +1105,7 @@ const OUTLOOK_LOCATION = "";
 /** =============================
  * 1) Date helpers (LOCAL, no UTC shift)
  * ============================= */
+
 function mondayOf(date){
   const d = new Date(date);
   const day = (d.getDay() + 6) % 7; // Mon=0
@@ -1128,9 +1200,9 @@ function weekToRow(weekStartIso){
 }
 
 function rowToWeek(row){
-  return {
+  const week = {
     status: row.status || "draft",
-    // ✅ тепер зберігаємо реальний owner (uuid з profiles/auth.users)
+    // ✅ реальний owner (uuid з profiles/auth.users)
     approvedBy: row.approved_by || null,
     approvedAt: row.approved_at || null,
     reservations: row.reservations || {},
@@ -1139,6 +1211,8 @@ function rowToWeek(row){
     duels: {},
     dayMeta: {},
   };
+
+  return migrateWeekIds(week);
 }
 
 async function loadNextWeekFromDB(){
@@ -1273,8 +1347,7 @@ function saveState(){
   if (typeof meSel !== "undefined" && meSel) render();
 }
 
-let state = loadState();
-
+let state = null;
 function ensureMonthlyTokens(){
   const mk = monthKey(new Date());
   if(state.tokensMonth !== mk){
@@ -1363,27 +1436,86 @@ function formatModeUA(mode){
 
 
 /** =============================
- * 3) Compute week keys: current + next
+ * 3) Week keys (computed in boot, after roster + state)
  * ============================= */
-const thisWeekStart = isoDate(mondayOf(new Date()));
-const nextWeekStart = isoDate(addDays(new Date(thisWeekStart), 7));
-getWeek(thisWeekStart);
-getWeek(nextWeekStart);
-ensureMonthlyTokens();
-localStorage.setItem(LS_KEY, JSON.stringify(state));
+let thisWeekStart = null;
+let nextWeekStart = null;
+
+function initWeekKeys(){
+  thisWeekStart = isoDate(mondayOf(new Date()));
+  nextWeekStart = isoDate(addDays(new Date(thisWeekStart), 7));
+
+  if(state){
+    getWeek(thisWeekStart);
+    getWeek(nextWeekStart);
+    ensureMonthlyTokens();
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+  }
+}
+
+/** =============================
+ * 5.5) Legacy ID migration (u1/u2/... -> uuid)
+ *  - якщо у старих збереженнях (LS/DB) є ключі u1/u2, ми конвертуємо їх у uuid з profiles
+ * ============================= */
+
+function migrateUserMap(obj){
+  const out = {};
+  for(const [uid, val] of Object.entries(obj || {})){
+    out[mapUserId(uid)] = val;
+  }
+  return out;
+}
+
+function migrateDateUserMap(dateMap){
+  const out = {};
+  for(const [date, day] of Object.entries(dateMap || {})){
+    const nd = {};
+    for(const [uid, val] of Object.entries(day || {})){
+      nd[mapUserId(uid)] = val;
+    }
+    out[date] = nd;
+  }
+  return out;
+}
+
+function migrateWeekIds(week){
+  if(!week) return week;
+  week.reservations = migrateDateUserMap(week.reservations);
+  week.dayOff = migrateDateUserMap(week.dayOff);
+  if(week.approvedBy) week.approvedBy = mapUserId(week.approvedBy);
+  return week;
+}
+
+function migrateStateIds(){
+  if(!state) return;
+  state.tokens = migrateUserMap(state.tokens);
+  state.stats = migrateUserMap(state.stats);
+
+  // migrate all cached weeks
+  for(const [ws, w] of Object.entries(state.weeks || {})){
+    state.weeks[ws] = migrateWeekIds(w);
+  }
+}
+
 
 /** =============================
  * 4) UI init
  * ============================= */
 const meSel = document.getElementById("me");
-TEAM.forEach(u => {
-  const opt = document.createElement("option");
-  opt.value = u.id;
-  opt.textContent = `${u.name}${u.role==="manager" ? " 👑" : ""}`;
-  meSel.appendChild(opt);
-});
-meSel.value = TEAM[0].id;
-meSel.onchange = () => render();
+
+function initRosterUI(){
+  if(!meSel) return;
+  meSel.innerHTML = "";
+  TEAM.forEach(u => {
+    const opt = document.createElement("option");
+    opt.value = u.id;
+    opt.textContent = `${u.name}${u.role === "manager" ? " (Менеджер)" : ""}`;
+    meSel.appendChild(opt);
+  });
+  // ✅ після логіну ми фіксуємо meSel на session.user.id і ховаємо селект
+  meSel.disabled = true;
+  meSel.style.display = "none";
+}
 
 const tabNext = document.getElementById("tabNext");
 const tabThis = document.getElementById("tabThis");
@@ -1452,7 +1584,10 @@ function hasPendingInDay(weekStartIso, dateIso){
   const day = w.reservations[dateIso] || {};
   return Object.values(day).some(v => v === "remote_pending");
 }
-function currentUser(){ return TEAM.find(u => u.id === meSel.value); }
+function currentUser(){
+  const uid = currentSession?.user?.id || meSel?.value;
+  return TEAM.find(u => u.id === uid);
+}
 
 function winRate(uid){
   const s = state.stats?.[uid] || { w:0, l:0 };
@@ -1665,8 +1800,23 @@ async function conflictModal({ weekStartIso, dateIso, challenger, defender }){
  * 7) Rendering
  * ============================= */
 function render(){
-  ensureMonthlyTokens();
+  // guards
+  const thisCard = document.getElementById("thisWeekCard");
+  const nextCard = document.getElementById("nextWeekCard");
 
+  if(!isLoggedIn()){
+    if(thisCard) thisCard.innerHTML = `<div class="muted">Увійди, щоб бачити графік на тиждень.</div>`;
+    if(nextCard) nextCard.innerHTML = `<div class="muted">Увійди, щоб бачити графік на тиждень.</div>`;
+    return;
+  }
+
+  if(!state || !thisWeekStart || !nextWeekStart || TEAM.length === 0){
+    if(thisCard) thisCard.innerHTML = `<div class="muted">Завантаження…</div>`;
+    if(nextCard) nextCard.innerHTML = `<div class="muted">Завантаження…</div>`;
+    return;
+  }
+
+  ensureMonthlyTokens();
 renderManagerControls();
 
   // top counters for NEXT week only (planning)
@@ -2582,53 +2732,77 @@ function startRealtimeForNextWeek(){
 /** =============================
  * 6) Auth init (single entry point)
  *  - init session
- *  - load week from DB only when logged in
- *  - re-render on auth changes
+ *  - on login: load profiles -> build TEAM -> init state/week -> load DB + realtime
+ *  - on logout: stop realtime + clear roster UI
  * ============================= */
 
+async function initAfterLogin(){
+  // 1) profiles -> TEAM
+  await refreshProfilesCache();
+  buildTeamFromProfiles();
+  buildLegacyIdMap();
+
+  // 2) UI for "me" (hidden selector + label)
+  initRosterUI();
+  setMeToLoggedInUser();
+
+  // 3) state + migration
+  if(!state) state = loadState();
+  migrateStateIds();
+
+  // 4) week keys + initial weeks
+  initWeekKeys();
+
+  // 5) DB week + realtime
+  await loadNextWeekFromDB();
+  startRealtimeForNextWeek();
+}
+
+function clearAppOnLogout(){
+  stopRealtimeForNextWeek();
+  TEAM = [];
+  EMAILS = {};
+  LEGACY_ID_MAP = {};
+
+  const meName = document.getElementById("meName");
+  if(meName){
+    meName.textContent = "";
+    meName.style.display = "none";
+  }
+}
+
 async function boot(){
-  // 1) стартова сесія
   const { data: { session }, error } = await sb.auth.getSession();
   if(error) console.error("getSession error:", error);
 
   currentSession = session;
   setAuthUI(session);
 
-  
-  if(isLoggedIn()) startRealtimeForNextWeek();
-  else stopRealtime();
-// 2) перший рендер — не блокуємо UI мережевими запитами
-  render();
-
-  // 3) якщо залогінені — підтягуємо nextWeek з БД у фоні й робимо повторний render
   if(isLoggedIn()){
-    withTimeout(loadNextWeekFromDB(), 2500)
-      .catch(err => console.warn("loadNextWeekFromDB timeout/error:", err))
-      .finally(() => render());
+    await initAfterLogin();
+  } else {
+    clearAppOnLogout();
   }
+
+  render();
 }
 
-// 4) один listener на зміну auth-стану
+// один listener на зміну auth-стану
 sb.auth.onAuthStateChange(async (_event, session) => {
   currentSession = session;
   setAuthUI(session);
 
-  // швидко перемалюємо UI
-  render();
-
-  // і потім (за потреби) підтягнемо дані з БД
   if(isLoggedIn()){
-    withTimeout(loadNextWeekFromDB(), 2500)
-      .catch(err => console.warn("loadNextWeekFromDB timeout/error:", err))
-      .finally(() => render());
+    await initAfterLogin();
+  } else {
+    clearAppOnLogout();
   }
+
+  render();
 });
 
-// 5) запускаємо boot ОДИН раз
+// запускаємо boot ОДИН раз
 boot();
-
-
-
 </script>
 </body>
 
