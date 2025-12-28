@@ -710,6 +710,8 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 }
 
 .onlyEmployee.hidden { display: none !important; }
+/* hide local reset button for everyone */
+#btnReset { display: none !important; }
 
 </style>
 </head>
@@ -1535,14 +1537,12 @@ tabThis.onclick = () => setTab("this");
 setTab("next");
 
 
-document.getElementById("btnReset").onclick = () => {
-  localStorage.removeItem(LS_KEY);
-  state = defaultState();
-  getWeek(thisWeekStart);
-  getWeek(nextWeekStart);
-  ensureMonthlyTokens();
-  saveState();
-};
+// hide + disable local reset (we use Supabase as source of truth)
+const btnReset = document.getElementById("btnReset");
+if (btnReset) {
+  btnReset.style.display = "none";
+  btnReset.onclick = null;
+}
 
 const btnICS = document.getElementById("btnICS");
 if(btnICS){
