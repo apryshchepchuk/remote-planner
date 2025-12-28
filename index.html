@@ -840,10 +840,22 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
   const password = document.getElementById("loginPass").value;
 
   const { error } = await sb.auth.signInWithPassword({ email, password });
+
   if (error) {
     alert("Login error: " + error.message);
+    return;
   }
-  // далі UI оновиться через onAuthStateChange
+
+  // ✅ FORCE refresh session + UI (не покладаємось лише на onAuthStateChange)
+  const { data: { session } } = await sb.auth.getSession();
+  currentSession = session;
+  setAuthUI(session);
+
+  if (isLoggedIn()) {
+    await loadNextWeekFromDB();
+  }
+
+  render();
 });
 
 // logout
@@ -853,8 +865,13 @@ document.getElementById("btnLogout").addEventListener("click", async (e) => {
   const { error } = await sb.auth.signOut();
   if (error) {
     alert("Logout error: " + error.message);
+    return;
   }
-  // далі UI оновиться через onAuthStateChange
+
+  // ✅ FORCE очистка сесії + UI
+  currentSession = null;
+  setAuthUI(null);
+  render();
 });
 
 
@@ -2305,21 +2322,24 @@ function autoDownloadSummaryEml(weekStartIso){
  * ============================= */
 
 async function boot(){
-  // 1) стартова сесія
-  const { data: { session }, error } = await sb.auth.getSession();
-  if(error) console.error("getSession error:", error);
+  try{
+    const { data: { session }, error } = await sb.auth.getSession();
+    if(error) console.error("getSession error:", error);
 
-  currentSession = session;
-  setAuthUI(session);
+    currentSession = session;
+    setAuthUI(session);
 
-  // 2) якщо залогінені — підтягуємо nextWeek з БД і мерджимо в state
-  if(isLoggedIn()){
-    await loadNextWeekFromDB();
+    if(isLoggedIn()){
+      await loadNextWeekFromDB();
+    }
+
+    render();
+  }catch(e){
+    alert("BOOT ERROR: " + (e?.message || e));
+    console.error(e);
   }
-
-  // 3) перший рендер (вже коли nextWeekStart існує)
-  render();
 }
+
 
 // 4) один listener на зміну auth-стану
 sb.auth.onAuthStateChange(async (_event, session) => {
