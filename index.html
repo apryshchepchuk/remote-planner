@@ -832,7 +832,6 @@ function setAuthUI(session){
       : "Not logged in";
   }
 }
-// login
 document.getElementById("btnLogin").addEventListener("click", async (e) => {
   e.preventDefault();
 
@@ -846,34 +845,31 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
     return;
   }
 
-  // ✅ FORCE refresh session + UI (не покладаємось лише на onAuthStateChange)
-  const { data: { session } } = await sb.auth.getSession();
-  currentSession = session;
-  setAuthUI(session);
-
-  if (isLoggedIn()) {
-    await loadNextWeekFromDB();
-  }
-
-  render();
 });
 
-// logout
 document.getElementById("btnLogout").addEventListener("click", async (e) => {
   e.preventDefault();
 
-  const { error } = await sb.auth.signOut();
-  if (error) {
-    alert("Logout error: " + error.message);
-    return;
+  try {
+    const { error } = await sb.auth.signOut();
+    if (error) {
+      alert("Logout error: " + error.message);
+      return;
+    }
+
+    // 🔒 Fallback — якщо onAuthStateChange не спрацює
+    currentSession = null;
+    setAuthUI(null);
+    render();
+
+    // 🧨 на GitHub Pages / mobile це РЕАЛЬНО рятує
+    location.reload();
+
+  } catch (err) {
+    alert("Logout failed: " + (err?.message || err));
+    console.error(err);
   }
-
-  // ✅ FORCE очистка сесії + UI
-  currentSession = null;
-  setAuthUI(null);
-  render();
 });
-
 
   
 /** =============================
@@ -2341,17 +2337,22 @@ async function boot(){
 }
 
 
-// 4) один listener на зміну auth-стану
 sb.auth.onAuthStateChange(async (_event, session) => {
-  currentSession = session;
-  setAuthUI(session);
+  try{
+    currentSession = session;
+    setAuthUI(session);
 
-  if(isLoggedIn()){
-    await loadNextWeekFromDB();
+    if(isLoggedIn()){
+      await loadNextWeekFromDB();
+    }
+
+    render();
+  }catch(e){
+    alert("AUTH CHANGE ERROR: " + (e?.message || e));
+    console.error(e);
   }
-
-  render();
 });
+
 
 // 5) запускаємо boot ОДИН раз
 boot();
