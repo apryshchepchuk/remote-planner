@@ -881,7 +881,11 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
   currentSession = session;
   setAuthUI(session);
 
-  render();
+  
+  // realtime only for authenticated users
+  if(isLoggedIn()) startRealtimeForNextWeek();
+  else stopRealtime();
+render();
 
   // load week in background (don’t block UI)
   if(isLoggedIn()){
@@ -1138,7 +1142,8 @@ function saveState(){
 
   // пишемо в Supabase тільки nextWeekStart
   // (і тільки якщо залогінені)
-  queueSaveNextWeekToDB();
+  // пишемо в Supabase тільки коли це НЕ apply з realtime
+  if(!rtApplying) queueSaveNextWeekToDB();
 
   if (typeof meSel !== "undefined" && meSel) render();
 }
@@ -2356,6 +2361,71 @@ function autoDownloadSummaryEml(weekStartIso){
   downloadText(`summary_${weekStartIso}.eml`, eml, "message/rfc822");
 }
 
+
+/** =============================
+ * 5.9) Realtime (Postgres Changes) — sync nextWeek in all browsers
+ *  - listens only for planner_weeks where week_start == nextWeekStart
+ *  - applies remote updates to local state WITHOUT triggering saveState()
+ * ============================= */
+
+let rtChannel = null;
+let rtApplying = false;
+
+function stopRealtime(){
+  try{
+    if(rtChannel){
+      sb.removeChannel(rtChannel);
+      rtChannel = null;
+    }
+  }catch(e){
+    console.warn("stopRealtime error:", e);
+  }
+}
+
+function startRealtimeForNextWeek(){
+  if(rtChannel) return;               // already running
+  if(!isLoggedIn()) return;           // only for authed users
+
+  rtChannel = sb
+    .channel(`planner_weeks:${nextWeekStart}`)
+    .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "planner_weeks",
+        filter: `week_start=eq.${nextWeekStart}`,
+      }, (payload) => {
+        // payload.eventType: INSERT | UPDATE | DELETE
+        // payload.new / payload.old: row
+        try{
+          rtApplying = true;
+
+          if(payload.eventType === "DELETE"){
+            // record removed — reset local week
+            state.weeks[nextWeekStart] = emptyWeek();
+          }else{
+            const row = payload.new;
+            if(row){
+              state.weeks[nextWeekStart] = { ...emptyWeek(), ...rowToWeek(row) };
+            }
+          }
+
+          // write only to localStorage (NO saveState -> no DB write)
+          localStorage.setItem(LS_KEY, JSON.stringify(state));
+
+          // refresh UI (so everybody sees the change)
+          render();
+        }catch(e){
+          console.error("realtime apply error:", e, payload);
+        }finally{
+          rtApplying = false;
+        }
+      })
+    .subscribe((status) => {
+      console.log("[realtime planner_weeks]", status);
+    });
+}
+
+
 /** =============================
  * 6) Auth init (single entry point)
  *  - init session
@@ -2371,7 +2441,10 @@ async function boot(){
   currentSession = session;
   setAuthUI(session);
 
-  // 2) перший рендер — не блокуємо UI мережевими запитами
+  
+  if(isLoggedIn()) startRealtimeForNextWeek();
+  else stopRealtime();
+// 2) перший рендер — не блокуємо UI мережевими запитами
   render();
 
   // 3) якщо залогінені — підтягуємо nextWeek з БД у фоні й робимо повторний render
