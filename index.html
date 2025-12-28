@@ -832,7 +832,33 @@ function setAuthUI(session){
       : "Not logged in";
   }
 }
+// login
+document.getElementById("btnLogin").addEventListener("click", async (e) => {
+  e.preventDefault();
 
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPass").value;
+
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) {
+    alert("Login error: " + error.message);
+  }
+  // далі UI оновиться через onAuthStateChange
+});
+
+// logout
+document.getElementById("btnLogout").addEventListener("click", async (e) => {
+  e.preventDefault();
+
+  const { error } = await sb.auth.signOut();
+  if (error) {
+    alert("Logout error: " + error.message);
+  }
+  // далі UI оновиться через onAuthStateChange
+});
+
+
+  
 /** =============================
  * 0) Team
  * ============================= */
