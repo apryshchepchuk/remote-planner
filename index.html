@@ -1304,14 +1304,107 @@ async function loadThisWeekFromDB(){
 async function saveNextWeekToDB(){
   if(!isLoggedIn()) return;
 
-  const row = weekToRow(nextWeekStart);
+  // не запускаємо паралельні записи (debounce може стріляти часто)
+  if(saveNextWeekToDB._inFlight) return;
+  saveNextWeekToDB._inFlight = true;
 
-  const { error } = await sb
-    .from("planner_weeks")
-    .upsert(row, { onConflict: "week_start" });
+  try{
+    const row = weekToRow(nextWeekStart);
 
-  if(error){
-    console.error("saveNextWeekToDB error:", error);
+    // локальні зміни відносно останнього DB snapshot (для м'якого мерджу при конфлікті)
+    const baseSnap = nextWeekDbSnapshot || emptyWeek();
+    const localWeek = deepCopy(getWeek(nextWeekStart));
+    const localOps = computeWeekOps(baseSnap, localWeek);
+
+    // 1) Оптимістичний UPDATE (щоб не перезаписати чужі зміни “поверх”)
+    if(nextWeekDbUpdatedAt){
+      const payload = { ...row };
+      delete payload.week_start; // PK не оновлюємо
+
+      let { data, error } = await sb
+        .from("planner_weeks")
+        .update(payload)
+        .eq("week_start", nextWeekStart)
+        .eq("updated_at", nextWeekDbUpdatedAt) // optimistic lock
+        .select("*")
+        .maybeSingle();
+
+      if(error){
+        console.error("saveNextWeekToDB update error:", error);
+        return;
+      }
+
+      // data == null => 0 rows matched => хтось встиг оновити тиждень раніше
+      if(!data){
+        // 1.1) Показуємо попередження (раз на кілька секунд)
+        const now = Date.now();
+        if(!saveNextWeekToDB._lastWarnAt || now - saveNextWeekToDB._lastWarnAt > 3000){
+          saveNextWeekToDB._lastWarnAt = now;
+          alert("⚠️ Хтось уже змінив цей тиждень паралельно. Я підвантажу актуальні дані. Якщо побачиш дивне — зроби Refresh сторінки.");
+        }
+
+        // 1.2) Підтягуємо свіжу версію з БД і М’ЯКО накладаємо локальні зміни
+        await loadNextWeekFromDB(); // оновить nextWeekDbUpdatedAt/nextWeekDbSnapshot + state.weeks[nextWeekStart]
+        try{
+          applyWeekOps(state.weeks[nextWeekStart], localOps);
+          localStorage.setItem(LS_KEY, JSON.stringify(state));
+        }catch(e){
+          console.error("applyWeekOps after conflict failed:", e);
+        }
+
+        render();
+
+        // 1.3) Спробуємо записати ще раз (вже з новим updated_at)
+        const row2 = weekToRow(nextWeekStart);
+        const payload2 = { ...row2 };
+        delete payload2.week_start;
+
+        const r2 = await sb
+          .from("planner_weeks")
+          .update(payload2)
+          .eq("week_start", nextWeekStart)
+          .eq("updated_at", nextWeekDbUpdatedAt)
+          .select("*")
+          .maybeSingle();
+
+        if(r2.error){
+          console.error("saveNextWeekToDB retry error:", r2.error);
+          return;
+        }
+        if(!r2.data){
+          console.warn("saveNextWeekToDB: still conflict after retry (ask user to refresh)");
+          return;
+        }
+
+        // успішно
+        nextWeekDbUpdatedAt = r2.data.updated_at || nextWeekDbUpdatedAt;
+        nextWeekDbSnapshot = deepCopy(rowToWeek(r2.data));
+        return;
+      }
+
+      // успіх з першого разу
+      nextWeekDbUpdatedAt = data.updated_at || nextWeekDbUpdatedAt;
+      nextWeekDbSnapshot = deepCopy(rowToWeek(data));
+      return;
+    }
+
+    // 2) Якщо updated_at ще не знаємо — просто upsert (перший запис тижня)
+    const { data, error } = await sb
+      .from("planner_weeks")
+      .upsert(row, { onConflict: "week_start" })
+      .select("*")
+      .maybeSingle();
+
+    if(error){
+      console.error("saveNextWeekToDB upsert error:", error);
+      return;
+    }
+    if(data){
+      nextWeekDbUpdatedAt = data.updated_at || nextWeekDbUpdatedAt;
+      nextWeekDbSnapshot = deepCopy(rowToWeek(data));
+    }
+  } finally {
+    saveNextWeekToDB._inFlight = false;
   }
 }
 let saveNextWeekTimer = null;
@@ -1324,6 +1417,7 @@ function queueSaveNextWeekToDB(){
     saveNextWeekToDB();
   }, 400); // 300–500 мс оптимально
 }
+
 
 /** =============================
  * 2) State model
