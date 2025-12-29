@@ -922,34 +922,34 @@ function isLoggedIn(){
 }
 
 function setAuthUI(session){
-  const authCard   = document.getElementById("authCard");
-  const loginBlock = document.getElementById("loginFields");
-  const authState  = document.getElementById("authStatus");
-  const btnLogout  = document.getElementById("btnLogout");
-  const appUI      = document.getElementById("appUI");
+const authCard = document.getElementById("authCard");
+const loginBlock = document.getElementById("loginFields");
+const authState = document.getElementById("authStatus");
+const btnLogout = document.getElementById("btnLogout");
 
-  const loggedIn = !!session?.user;
-  if(appUI) appUI.style.display = loggedIn ? "block" : "none";
+// ✅ ОЦЕ ГОЛОВНЕ: правильний контейнер "після логіну"
+const afterLogin = document.getElementById("afterLogin");
 
-  // опційно: чистимо тижні при logout, щоб не було “старого” DOM
-  if(!loggedIn){
-    const n = document.getElementById("nextWeekCard");
-    const t = document.getElementById("thisWeekCard");
-    if(n) n.innerHTML = "";
-    if(t) t.innerHTML = "";
-  }
-  // authCard завжди видимий
-  if(authCard) authCard.style.display = "block";
+const loggedIn = !!session?.user;
 
-  // показуємо або логін, або логаут
-  if(loginBlock) loginBlock.style.display = loggedIn ? "none" : "flex";
-  if(btnLogout)  btnLogout.style.display  = loggedIn ? "inline-flex" : "none";
+if(authCard) authCard.style.display = "block";
+if(loginBlock) loginBlock.style.display = loggedIn ? "none" : "flex";
+if(btnLogout) btnLogout.style.display = loggedIn ? "inline-flex" : "none";
+if(afterLogin) afterLogin.style.display = loggedIn ? "block" : "none";
 
-  if(authState){
-    authState.textContent = loggedIn
-      ? `Logged in: ${session.user.email}`
-      : "Not logged in";
-  }
+if(authState){
+authState.textContent = loggedIn
+? `Logged in: ${session.user.email}`
+: "Not logged in";
+}
+
+// (опційно) якщо розлогінились — прибрати старий DOM тижнів
+if(!loggedIn){
+const n = document.getElementById("nextWeekCard");
+const t = document.getElementById("thisWeekCard");
+if(n) n.innerHTML = "";
+if(t) t.innerHTML = "";
+}
 }
 
 
