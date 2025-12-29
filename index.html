@@ -719,20 +719,24 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   <div class="top">
     <h1>Графік офіс/remote</h1>
   </div>
+  
 <div class="card" id="authCard">
-  <div class="row">
+  <div class="row" style="width:100%;">
     <div id="loginFields" class="row" style="gap:10px; flex-wrap:wrap;">
       <input id="loginEmail" type="email" placeholder="Email" />
       <input id="loginPass" type="password" placeholder="Password" />
       <button id="btnLogin" class="primary">Login</button>
     </div>
-<!-- Everything below is visible ONLY after login -->
-<div id="appUI" style="display:none;">
-    <button id="btnLogout" class="bad" style="display:none;">Logout</button>
+
     <span class="right"></span>
-    <span class="muted small" id="authStatus"></span>
+    <!-- статус має бути видимий завжди -->
+    <span class="muted small" id="authStatus">Not logged in</span>
+
+    <!-- Logout тільки після логіну -->
+    <button id="btnLogout" class="bad" style="display:none;">Logout</button>
   </div>
 </div>
+  <div id="afterLogin" style="display:none;">
   <div class="card">
     <div class="row">
       <label class="badge">Я:</label>
@@ -768,8 +772,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   <div class="card" id="thisWeekCard"></div>
 </div>
 
-</div>
-</div><!-- /appUI -->
+</div><!-- /afterLogin -->
 <!-- Modal: conflict resolver -->
 <div id="modalBackdrop" class="modalBackdrop">
   <div class="card modal">
