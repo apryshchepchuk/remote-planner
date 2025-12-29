@@ -793,29 +793,32 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 const SUPABASE_URL = "https://gwpmbzkuvkamitvtvjiy.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3cG1iemt1dmthbWl0dnR2aml5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0ODE1MDgsImV4cCI6MjA4MjA1NzUwOH0.6vgbAK0nIj3FqaX39FgQatNtj4EYecXf9fUl2RxExbo";
 
-// ---- Supabase auth storage (fix: session persists on refresh) ----
-const SB_STORAGE = (() => {
-  try {
-    const k = "__sb_test__";
-    localStorage.setItem(k, "1");
-    localStorage.removeItem(k);
-    return localStorage;            // пріоритет
-  } catch (e) {
-    return sessionStorage;          // fallback (переживає refresh у вкладці)
-  }
-})();
-
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    storage: SB_STORAGE,
+  }
+});
+  
+let currentSession = null;
+
+
+/** =============================
+ * Auth bootstrap: catch INITIAL_SESSION early (page refresh)
+ * ============================= */
+let __initialSessionResolved = false;
+let __initialSessionResolve;
+const __initialSessionPromise = new Promise(res => (__initialSessionResolve = res));
+
+// Register early to avoid missing INITIAL_SESSION when the page loads fast
+sb.auth.onAuthStateChange((event, session) => {
+  if(event === "INITIAL_SESSION" && !__initialSessionResolved){
+    __initialSessionResolved = true;
+    __initialSessionResolve(session || null);
   }
 });
 
-  
-let currentSession = null;
 
 
 // === Realtime conflict control (nextWeek only) ===
@@ -2849,12 +2852,10 @@ function clearAppOnLogout(){
   }
 }
 
-async function boot(){
-  const { data: { session }, error } = await sb.auth.getSession();
-  if(error) console.error("getSession error:", error);
 
-  currentSession = session;
-  setAuthUI(session);
+async function applyAuthSession(session){
+  currentSession = session || null;
+  setAuthUI(currentSession);
 
   if(isLoggedIn()){
     await initAfterLogin();
@@ -2865,21 +2866,45 @@ async function boot(){
   render();
 }
 
-// один listener на зміну auth-стану
-sb.auth.onAuthStateChange(async (_event, session) => {
-  currentSession = session;
-  setAuthUI(session);
+// Надійний старт після refresh:
+// - чекаємо INITIAL_SESSION (коли Supabase відновить сесію зі сховища)
+// - fallback: getSession()
+let __bootApplied = false;
 
-  if(isLoggedIn()){
-    await initAfterLogin();
-  } else {
-    clearAppOnLogout();
+async function boot(){
+  let session = null;
+
+  try{
+    session = await Promise.race([
+      __initialSessionPromise,
+      (async () => {
+        const { data: { session }, error } = await sb.auth.getSession();
+        if(error) console.error("getSession error:", error);
+        return session || null;
+      })()
+    ]);
+  }catch(e){
+    console.error("boot session race error:", e);
+    const { data: { session } } = await sb.auth.getSession();
+    session = session || null;
   }
 
-  render();
+  __bootApplied = true;
+  await applyAuthSession(session);
+}
+
+// один listener на зміну auth-стану (після boot)
+sb.auth.onAuthStateChange(async (event, session) => {
+  // INITIAL_SESSION ми вже обробляємо в boot() — щоб не робити initAfterLogin() двічі
+  if(event === "INITIAL_SESSION" && __bootApplied) return;
+
+  // якщо boot ще не встиг — пропустимо, boot підхопить
+  if(!__bootApplied) return;
+
+  await applyAuthSession(session);
 });
 
-// запускаємо boot ОДИН раз
+// init
 boot();
 </script>
 </body>
