@@ -972,12 +972,15 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
 
   
   // realtime only for authenticated users
-  if(isLoggedIn()) startRealtimeForNextWeek();
-  startRealtimeForThisWeek();
-  else stopRealtime();
-render();
+  if(isLoggedIn()){
+    startRealtimeForNextWeek();
+    startRealtimeForThisWeek();
+  }else{
+    stopRealtime();
+  }
 
-  // load week in background (don’t block UI)
+  render();
+// load week in background (don’t block UI)
   if(isLoggedIn()){
     withTimeout(loadNextWeekFromDB(), 2500)
       .catch(err => console.warn("loadNextWeekFromDB timeout/error:", err))
@@ -2704,7 +2707,16 @@ function stopRealtime(){
       rtChannel = null;
     }
   }catch(e){
-    console.warn("stopRealtime error:", e);
+    console.warn("stopRealtime(next) error:", e);
+  }
+
+  try{
+    if(rtChannelThis){
+      sb.removeChannel(rtChannelThis);
+      rtChannelThis = null;
+    }
+  }catch(e){
+    console.warn("stopRealtime(this) error:", e);
   }
 }
 
@@ -2807,10 +2819,11 @@ async function initAfterLogin(){
   await loadThisWeekFromDB();
   await loadNextWeekFromDB();
   startRealtimeForNextWeek();
+  startRealtimeForThisWeek();
 }
 
 function clearAppOnLogout(){
-  stopRealtimeForNextWeek();
+  stopRealtime();
   TEAM = [];
   EMAILS = {};
   LEGACY_ID_MAP = {};
