@@ -710,8 +710,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 }
 
 .onlyEmployee.hidden { display: none !important; }
-/* hide local reset button for everyone */
-#btnReset { display: none !important; }
 
 </style>
 </head>
@@ -749,7 +747,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 
       <span class="right"></span>
 
-      <button id="btnReset" class="bad">Скинути все (local)</button>
+<button id="btnReset" class="bad" style="display:none">Скинути все (local)</button>
       <span id="mgrControls" class="row" style="gap:8px;"></span>
     </div>
     </div>
@@ -975,6 +973,7 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
   
   // realtime only for authenticated users
   if(isLoggedIn()) startRealtimeForNextWeek();
+  startRealtimeForThisWeek();
   else stopRealtime();
 render();
 
@@ -1244,6 +1243,28 @@ async function loadNextWeekFromDB(){
 
   // На старті БД — джерело істини (щоб не підміняти чужі зміни старим localStorage)
   state.weeks[nextWeekStart] = dbWeek;
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+}
+
+
+async function loadThisWeekFromDB(){
+  if(!isLoggedIn()) return;
+
+  const { data, error } = await sb
+    .from("planner_weeks")
+    .select("*")
+    .eq("week_start", thisWeekStart)
+    .maybeSingle();
+
+  if(error){
+    console.error("loadThisWeekFromDB error:", error);
+    return;
+  }
+
+  // якщо запису нема — нічого не створюємо (це переглядовий тиждень)
+  if(!data) return;
+
+  state.weeks[thisWeekStart] = { ...emptyWeek(), ...rowToWeek(data) };
   localStorage.setItem(LS_KEY, JSON.stringify(state));
 }
 
@@ -1537,12 +1558,12 @@ tabThis.onclick = () => setTab("this");
 setTab("next");
 
 
-// hide + disable local reset (we use Supabase as source of truth)
 const btnReset = document.getElementById("btnReset");
-if (btnReset) {
-  btnReset.style.display = "none";
-  btnReset.onclick = null;
+if(btnReset){
+  btnReset.style.display = "none"; // ховаємо для всіх
+  btnReset.onclick = null;         // на всяк випадок
 }
+
 
 const btnICS = document.getElementById("btnICS");
 if(btnICS){
@@ -2645,7 +2666,36 @@ function autoDownloadSummaryEml(weekStartIso){
  * ============================= */
 
 let rtChannel = null;
+let rtChannelThis = null; // current week mirror
+
 let rtApplying = false;
+
+
+function startRealtimeForThisWeek(){
+  if(rtChannelThis) return;
+
+  rtChannelThis = sb
+    .channel(`planner_weeks_this_${thisWeekStart}`)
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'planner_weeks',
+      filter: `week_start=eq.${thisWeekStart}`
+    }, (payload) => {
+      try{
+        const row = payload.new || payload.old;
+        if(!row) return;
+
+        state.weeks[thisWeekStart] = { ...emptyWeek(), ...rowToWeek(row) };
+        localStorage.setItem(LS_KEY, JSON.stringify(state));
+
+        if(!rtApplying) render();
+      }catch(e){
+        console.error("RT thisWeek apply failed:", e);
+      }
+    })
+    .subscribe();
+}
 
 function stopRealtime(){
   try{
@@ -2754,6 +2804,7 @@ async function initAfterLogin(){
   initWeekKeys();
 
   // 5) DB week + realtime
+  await loadThisWeekFromDB();
   await loadNextWeekFromDB();
   startRealtimeForNextWeek();
 }
