@@ -726,7 +726,8 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
       <input id="loginPass" type="password" placeholder="Password" />
       <button id="btnLogin" class="primary">Login</button>
     </div>
-
+<!-- Everything below is visible ONLY after login -->
+<div id="appUI" style="display:none;">
     <button id="btnLogout" class="bad" style="display:none;">Logout</button>
     <span class="right"></span>
     <span class="muted small" id="authStatus"></span>
@@ -768,7 +769,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 </div>
 
 </div>
-
+</div><!-- /appUI -->
 <!-- Modal: conflict resolver -->
 <div id="modalBackdrop" class="modalBackdrop">
   <div class="card modal">
@@ -922,9 +923,18 @@ function setAuthUI(session){
   const loginBlock = document.getElementById("loginFields");
   const authState  = document.getElementById("authStatus");
   const btnLogout  = document.getElementById("btnLogout");
+  const appUI      = document.getElementById("appUI");
 
   const loggedIn = !!session?.user;
+  if(appUI) appUI.style.display = loggedIn ? "block" : "none";
 
+  // опційно: чистимо тижні при logout, щоб не було “старого” DOM
+  if(!loggedIn){
+    const n = document.getElementById("nextWeekCard");
+    const t = document.getElementById("thisWeekCard");
+    if(n) n.innerHTML = "";
+    if(t) t.innerHTML = "";
+  }
   // authCard завжди видимий
   if(authCard) authCard.style.display = "block";
 
