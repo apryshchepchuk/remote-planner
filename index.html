@@ -793,13 +793,27 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 const SUPABASE_URL = "https://gwpmbzkuvkamitvtvjiy.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3cG1iemt1dmthbWl0dnR2aml5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0ODE1MDgsImV4cCI6MjA4MjA1NzUwOH0.6vgbAK0nIj3FqaX39FgQatNtj4EYecXf9fUl2RxExbo";
 
+// ---- Supabase auth storage (fix: session persists on refresh) ----
+const SB_STORAGE = (() => {
+  try {
+    const k = "__sb_test__";
+    localStorage.setItem(k, "1");
+    localStorage.removeItem(k);
+    return localStorage;            // пріоритет
+  } catch (e) {
+    return sessionStorage;          // fallback (переживає refresh у вкладці)
+  }
+})();
+
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+    storage: SB_STORAGE,
   }
 });
+
   
 let currentSession = null;
 
