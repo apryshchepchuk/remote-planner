@@ -711,6 +711,28 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 
 .onlyEmployee.hidden { display: none !important; }
 
+/* === UI tweak: прибрати верхній білий блок authCard === */
+#authCard.card{
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* щоб елементи всередині не “липли” до країв */
+#authCard .row{
+  padding: 0 !important;
+}
+
+/* опційно: вирівняти кнопку Logout і статус трохи акуратніше */
+#btnLogout{
+  margin-left: auto;
+}
+#authStatus{
+  margin-left: auto;
+  padding-right: 10px;
+}
+  
 </style>
 </head>
 
@@ -2107,10 +2129,19 @@ renderManagerControls();
   });
   const myId = me.id;
 
-  const myRemoteNext = (me.role === "manager") ? 0 : countMyRemoteDays(nextWeekStart, myId);
-  const remoteEl = document.getElementById("myRemoteCount");
-  remoteEl.textContent = `${myRemoteNext}/2`;
-  remoteEl.className = "pill my-remote" + (myRemoteNext > 2 ? " warn" : "");
+const remoteEl = document.getElementById("myRemoteCount");
+
+if(me.role === "manager"){
+  // менеджер не обирає дні => ліміт не показуємо
+  if(remoteEl) remoteEl.style.display = "none";
+} else {
+  if(remoteEl){
+    remoteEl.style.display = "";
+    const myRemoteNext = countMyRemoteDays(nextWeekStart, myId);
+    remoteEl.textContent = `${myRemoteNext}/2`;
+    remoteEl.className = "pill my-remote" + (myRemoteNext > 2 ? " warn" : "");
+  }
+}
 
   const myTok = (state.tokens && state.tokens[myId] != null) ? state.tokens[myId] : 0;
   document.getElementById("myTokens").textContent = `${myTok}/1`;
