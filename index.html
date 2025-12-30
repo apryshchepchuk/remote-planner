@@ -2001,27 +2001,27 @@ if(!isLoggedIn() || !me || me.role !== "manager"){
     return;
   }
 
-  // керівник керує next week
   const w = getWeek(nextWeekStart);
-  const approved = (w.status === "approved");
+  const isDraft = (w.status === "draft");
+  const isApproved = (w.status === "approved");
 
-  host.innerHTML = `
-    <button id="mgrApprove" class="ok" ${approved ? "disabled" : ""}>Approve week</button>
+    host.innerHTML = `
+    <button id="mgrApprove" class="ok" ${isDraft ? "" : "disabled"}>Approve week</button>
+    <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"}>Unapprove → draft</button>
   `;
 
   const btnApprove = document.getElementById("mgrApprove");
+  const btnUnapprove = document.getElementById("mgrUnapprove");
 
   if(btnApprove){
-    btnApprove.onclick = () => {
-      const prevStatus = w.status;
-
-      // approve тільки 1 раз: лише з draft
-      if(prevStatus !== "draft"){
-        alert("Тиждень вже погоджено або не в статусі draft. Повторний approve не потрібен.");
+    btnApprove.onclick = async () => {
+      // approve тільки з draft
+      if(w.status !== "draft"){
+        alert("Тиждень вже не в статусі draft.");
         return;
       }
 
-      // ✅ approve exceptions тепер вбудований: remote_pending -> remote
+      // remote_pending -> remote (як і було)
       const ws = new Date(nextWeekStart);
       for(let i=0;i<5;i++){
         const dIso = isoDate(addDays(ws,i));
@@ -2029,15 +2029,17 @@ if(!isLoggedIn() || !me || me.role !== "manager"){
         for(const uid of Object.keys(day)){
           if(day[uid] === "remote_pending") day[uid] = "remote";
         }
-        // якщо об’єкта дня не було — не створюємо, щоб не засмічувати
       }
 
-      // ✅ фінальний approve: після цього змін не допускаємо
       w.status = "approved";
-      w.approvedBy = currentSession?.user?.id || null;
+      w.approvedBy = me.id;
       w.approvedAt = new Date().toISOString();
-      saveState();
 
+      saveState();
+      // щоб одразу записалось у Supabase (а не чекати debounce)
+      await saveNextWeekToDB();
+      render();
+      
       // ✅ summary .eml тільки при draft → approved
       try{
         autoDownloadSummaryEml(nextWeekStart);
@@ -2045,6 +2047,30 @@ if(!isLoggedIn() || !me || me.role !== "manager"){
         console.error(e);
         alert("Не вдалося згенерувати summary .eml. Перевір email-и в TEAM та Console.");
       }
+    };
+
+     if(btnUnapprove){
+    btnUnapprove.onclick = async () => {
+      if(w.status !== "approved"){
+        alert("Unapprove можливий лише зі статусу approved.");
+        return;
+      }
+
+      const ok = confirm(
+        "Повернути тиждень у draft?\n\n" +
+        "• Після цього працівники знову зможуть редагувати.\n" +
+        "• Дані тижня НЕ очищуються.\n" +
+        "• remote_pending НЕ відновлюється (тобто що стало remote — залишиться remote)."
+      );
+      if(!ok) return;
+
+      w.status = "draft";
+      w.approvedBy = null;
+      w.approvedAt = null;
+
+      saveState();
+      await saveNextWeekToDB();
+      render();
     };
   }
 }
