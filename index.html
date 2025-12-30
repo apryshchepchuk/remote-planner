@@ -1996,7 +1996,7 @@ function renderManagerControls(){
   if(!host) return;
 
   const me = currentUser();
-if(!isLoggedIn() || !me || me.role !== "manager"){
+  if(!me || me.role !== "manager"){
     host.innerHTML = "";
     return;
   }
@@ -2005,7 +2005,7 @@ if(!isLoggedIn() || !me || me.role !== "manager"){
   const isDraft = (w.status === "draft");
   const isApproved = (w.status === "approved");
 
-    host.innerHTML = `
+  host.innerHTML = `
     <button id="mgrApprove" class="ok" ${isDraft ? "" : "disabled"}>Approve week</button>
     <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"}>Unapprove → draft</button>
   `;
@@ -2039,17 +2039,13 @@ if(!isLoggedIn() || !me || me.role !== "manager"){
       // щоб одразу записалось у Supabase (а не чекати debounce)
       await saveNextWeekToDB();
       render();
-      
-      // ✅ summary .eml тільки при draft → approved
-      try{
-        autoDownloadSummaryEml(nextWeekStart);
-      }catch(e){
-        console.error(e);
-        alert("Не вдалося згенерувати summary .eml. Перевір email-и в TEAM та Console.");
-      }
-    };
 
-     if(btnUnapprove){
+      // якщо у тебе є автогенерація summary — лишай як було
+      try{ autoDownloadSummaryEml(nextWeekStart); }catch(e){ console.error(e); }
+    };
+  }
+
+  if(btnUnapprove){
     btnUnapprove.onclick = async () => {
       if(w.status !== "approved"){
         alert("Unapprove можливий лише зі статусу approved.");
