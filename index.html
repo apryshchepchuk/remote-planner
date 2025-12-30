@@ -2002,12 +2002,11 @@ function renderManagerControls(){
   }
 
   const w = getWeek(nextWeekStart);
-  const isDraft = (w.status === "draft");
   const isApproved = (w.status === "approved");
 
   host.innerHTML = `
-    <button id="mgrApprove" class="ok" ${isDraft ? "" : "disabled"}>Approve week</button>
-    <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"}>Unapprove → draft</button>
+    <button id="mgrApprove" class="ok" ${isApproved ? "disabled" : ""}>Approve week</button>
+    <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"} title="Повернути в draft">Unapprove</button>
   `;
 
   const btnApprove = document.getElementById("mgrApprove");
@@ -2015,17 +2014,17 @@ function renderManagerControls(){
 
   if(btnApprove){
     btnApprove.onclick = async () => {
-      // approve тільки з draft
       if(w.status !== "draft"){
-        alert("Тиждень вже не в статусі draft.");
+        alert("Тиждень уже не в статусі draft. Повторний approve не потрібен.");
         return;
       }
 
-      // remote_pending -> remote (як і було)
+      // remote_pending -> remote
       const ws = new Date(nextWeekStart);
       for(let i=0;i<5;i++){
         const dIso = isoDate(addDays(ws,i));
-        const day = w.reservations?.[dIso] || {};
+        const day = w.reservations?.[dIso];
+        if(!day) continue;
         for(const uid of Object.keys(day)){
           if(day[uid] === "remote_pending") day[uid] = "remote";
         }
@@ -2036,28 +2035,18 @@ function renderManagerControls(){
       w.approvedAt = new Date().toISOString();
 
       saveState();
-      // щоб одразу записалось у Supabase (а не чекати debounce)
       await saveNextWeekToDB();
       render();
 
-      // якщо у тебе є автогенерація summary — лишай як було
       try{ autoDownloadSummaryEml(nextWeekStart); }catch(e){ console.error(e); }
     };
   }
 
   if(btnUnapprove){
     btnUnapprove.onclick = async () => {
-      if(w.status !== "approved"){
-        alert("Unapprove можливий лише зі статусу approved.");
-        return;
-      }
+      if(w.status !== "approved") return;
 
-      const ok = confirm(
-        "Повернути тиждень у draft?\n\n" +
-        "• Після цього працівники знову зможуть редагувати.\n" +
-        "• Дані тижня НЕ очищуються.\n" +
-        "• remote_pending НЕ відновлюється (тобто що стало remote — залишиться remote)."
-      );
+      const ok = confirm("Повернути тиждень у Draft? Працівники знову зможуть редагувати. Pending НЕ відновлюємо.");
       if(!ok) return;
 
       w.status = "draft";
