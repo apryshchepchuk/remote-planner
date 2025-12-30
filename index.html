@@ -2043,20 +2043,37 @@ function renderManagerControls(){
   }
 
   if(btnUnapprove){
-    btnUnapprove.onclick = async () => {
-      if(w.status !== "approved") return;
+  btnUnapprove.onclick = async () => {
+  if (w.status !== "approved") {
+    alert("Тиждень не в статусі approved.");
+    return;
+  }
+  if (!confirm("Зняти approve і повернути тиждень у draft?")) return;
 
-      const ok = confirm("Повернути тиждень у Draft? Працівники знову зможуть редагувати. Pending НЕ відновлюємо.");
-      if(!ok) return;
+  // 1) Пишемо в Supabase тільки meta-поля (не чіпаємо reservations/day_off)
+  const { data, error } = await sb
+    .from("planner_weeks")
+    .update({
+      status: "draft",
+      approved_by: null,
+      approved_at: null
+    })
+    .eq("week_start", nextWeekStart)
+    .select("*")
+    .single();
 
-      w.status = "draft";
-      w.approvedBy = null;
-      w.approvedAt = null;
+  if (error) {
+    console.error("unapprove update error:", error);
+    alert("Unapprove не зберігся в Supabase: " + error.message);
+    return;
+  }
 
-      saveState();
-      await saveNextWeekToDB();
-      render();
-    };
+  // 2) Синхронізуємо локальний state з тим, що реально в БД
+  state.weeks[nextWeekStart] = { ...emptyWeek(), ...rowToWeek(data) };
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+
+  render();
+};
   }
 }
 
