@@ -202,35 +202,10 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 .muted{ color:var(--muted); font-size:13px; }
 .small{ font-size:12px; }
 
-/* Layout */
-.split2{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap:12px;
-}
 @media (max-width: 980px){
   .split2{ grid-template-columns: 1fr; }
 }
 
-.weekHeader{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-  align-items:center;
-  justify-content:space-between;
-  margin-bottom:10px;
-}
-.weekTitle{ display:flex; flex-direction:column; gap:2px; }
-.weekTitle b{ font-size:14px; }
-.weekTitle span{ color:var(--muted); font-size:12px; }
-
-.gridHead{
-  display:grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap:12px;
-  color:var(--muted);
-  font-size:12px;
-}
 .grid{
   display:grid;
   grid-template-columns: repeat(5, 1fr);
@@ -367,14 +342,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   color:#92400e;
 }
 
-/* Readonly note */
-.readonlyNote{
-  color:var(--muted);
-  font-size:12px;
-  display:flex;
-  gap:8px;
-  align-items:center;
-}
 
 /* Modal */
 .modalBackdrop{
@@ -583,19 +550,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   min-width: 0;
   width: 100%;
   white-space: nowrap;
-}
-
-.mgrOverrideBtns{
-  display:flex;
-  gap:8px;
-}
-
-.mgrOverrideBtns button{
-  padding:8px 10px;
-  border-radius:999px;
-  line-height:1;
-  font-size:14px;
-  min-width: 0;
 }
 
 .slotOverrideNote{
@@ -1254,8 +1208,6 @@ function setMeToLoggedInUser(){
 
 const LIMIT_REMOTE_PER_DAY = 2;
 const LS_KEY = "hybrid_league_v2";
-const OUTLOOK_SUMMARY = "Працюю віддалено";
-const OUTLOOK_LOCATION = ""; 
 
 /** =============================
  * 1) Date helpers (LOCAL, no UTC shift)
@@ -1281,13 +1233,7 @@ function isoDate(d){
   const dd = String(x.getDate()).padStart(2,"0");
   return `${yyyy}-${mm}-${dd}`;
 }
-function weekRangeLabel(weekStartIso){
-  const ws = new Date(weekStartIso);
-  const we = addDays(ws, 4);
-  const a = ws.toLocaleDateString("uk-UA", { day:"2-digit", month:"2-digit" });
-  const b = we.toLocaleDateString("uk-UA", { day:"2-digit", month:"2-digit" });
-  return `${a}–${b}`;
-}
+
 function monthKey(d){
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}`;
@@ -1332,13 +1278,6 @@ async function refreshProfilesCache(){
   PROFILE_BY_ID = {};
   PROFILES.forEach(p => { PROFILE_BY_ID[p.id] = p; });
 }
-
-function profileLabel(id){
-  if(!id) return "";
-  const p = PROFILE_BY_ID[id];
-  return p?.full_name || p?.email || (String(id).slice(0,8) + "…");
-}
-
 
 function weekToRow(weekStartIso){
   const w = getWeek(weekStartIso);
@@ -2389,20 +2328,6 @@ return `
   }).join("");
 }
 
-function countPendingWeek(weekStartIso){
-  const w = getWeek(weekStartIso);
-  let n = 0;
-  const ws = new Date(weekStartIso);
-  for(let i=0;i<5;i++){
-    const dIso = isoDate(addDays(ws,i));
-    const day = w.reservations[dIso] || {};
-    for(const uid of Object.keys(day)){
-      if(day[uid] === "remote_pending") n++;
-    }
-  }
-  return n;
-}
-
 /** =============================
  * 8) Planning logic (NEXT week only)
  * ============================= */
@@ -2656,16 +2581,6 @@ function downloadText(filename, text, mime){
  * 10) SUMMARY EMAIL (EML) — for manager approve
  * ============================= */
 
-// базовий “Q-encoding” для UTF-8 заголовків (Subject)
-function encodeHeaderUtf8(str){
-  // RFC 2047, B-encoding (Base64) — найстабільніше для Outlook
-  const bytes = new TextEncoder().encode(str);
-  let bin = "";
-  for(const b of bytes) bin += String.fromCharCode(b);
-  const b64 = btoa(bin);
-  return `=?UTF-8?B?${b64}?=`;
-}
-
 function b64utf8(str){
   const bytes = new TextEncoder().encode(str);
   let bin = "";
@@ -2734,52 +2649,7 @@ function buildSummaryEMLForWeek(weekStartIso, senderName, senderEmail, recipient
 
   return lines.join("\r\n");
 }
-
-function buildSummaryPlainText(weekStartIso){
-  const w = getWeek(weekStartIso);
-  const ws = new Date(weekStartIso);
-
-  const days = [];
-  for(let i=0;i<5;i++){
-    const d = addDays(ws,i);
-    const dIso = isoDate(d);
-    const ddmm = d.toLocaleDateString("uk-UA",{day:"2-digit",month:"2-digit"});
-    let wd = d.toLocaleDateString("uk-UA",{weekday:"short"});
-    days.push({ dIso, label: `${wd} ${ddmm}` });
-  }
-
-  const employees = TEAM.filter(u=>u.role!=="manager");
-
-  const approver = (w.approvedBy ? (PROFILE_BY_ID[w.approvedBy] || null) : null);
-  const approvedAt = w.approvedAt ? new Date(w.approvedAt) : null;
-  const approvedLine = (approver && approvedAt)
-    ? `Погоджено: ${approver.full_name || approver.email || "керівник"}, ${approvedAt.toLocaleString("uk-UA")}`
-    : "";
-
-  let out = "";
-  out += `Графік office/remote: ${days[0].label} – ${days[4].label}\n`;
-  out += `Підсумок тижня після approve.\n`;
-  if(approvedLine) out += approvedLine + "\n";
-  out += "\n";
-
-  for(const u of employees){
-    out += `${u.name}:\n`;
-    for(const d of days){
-      const dayOff = !!(w.dayOff && w.dayOff[d.dIso]);
-      if(dayOff){
-        out += `  - ${d.label}: Вихідний\n`;
-        continue;
-      }
-      const mode = (w.reservations?.[d.dIso]?.[u.id]) || "office";
-      out += `  - ${d.label}: ${formatModeUA(mode)}\n`;
-    }
-    out += "\n";
-  }
-
-  out += "Автоматичний summary.\n";
-  return out;
-}
-
+  
 /**
  * HTML summary БЕЗ emoji/іконок (бо Outlook показує ??).
  * Тут “Remote/Office/Відпустка/Вихідний/OK?” — тільки текст.
