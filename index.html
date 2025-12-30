@@ -823,7 +823,16 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
   
 let currentSession = null;
+let isRecoveryMode = false;
 
+function detectRecoveryFromUrl(){
+  const h = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  const q = new URLSearchParams(location.search || "");
+  return h.get("type") === "recovery" || q.get("type") === "recovery";
+}
+
+// якщо сторінка відкрита з recovery-лінка
+isRecoveryMode = detectRecoveryFromUrl();
 
 /** =============================
  * Auth bootstrap: catch INITIAL_SESSION early (page refresh)
@@ -874,8 +883,20 @@ if(btnForgot){
 
 // 2) Step 2: when user comes back via recovery link -> show UI and update password
 if(btnCancelReset){
-  btnCancelReset.addEventListener("click", () => {
+  btnCancelReset.addEventListener("click", async () => {
+    // вийти з recovery режиму
+    isRecoveryMode = false;
     showResetCard(false);
+
+    try { await sb.auth.signOut({ scope:"local" }); } catch(e) {}
+    try { forceClearSupabaseAuth(); } catch(e) {}
+
+    // прибрати hash/query від recovery
+    try { history.replaceState({}, document.title, window.location.pathname); } catch(e) {}
+
+    currentSession = null;
+    setAuthUI(null);
+    try { render(); } catch(e) {}
   });
 }
 
@@ -894,11 +915,20 @@ if(btnSetNewPass){
       return;
     }
 
-    alert("Пароль змінено. Залогінься з новим паролем.");
+    alert("Пароль змінено. Тепер увійди з новим паролем.");
+    isRecoveryMode = false;
     showResetCard(false);
 
-    // опційно: чистий стан
-    try { await sb.auth.signOut(); } catch(e) {}
+    // чистимо URL, щоб не залипав recovery-режим
+    try { history.replaceState({}, document.title, window.location.pathname); } catch(e) {}
+
+    // обов'язково виходимо, щоб НЕ було доступу до планера до нового логіну
+    try { await sb.auth.signOut({ scope:"local" }); } catch(e) {}
+    try { forceClearSupabaseAuth(); } catch(e) {}
+
+    currentSession = null;
+    setAuthUI(null);
+    try { render(); } catch(e) {}
   });
 }
 
@@ -907,8 +937,14 @@ if(btnSetNewPass){
 // Якщо треба await — робимо setTimeout(...,0)
 sb.auth.onAuthStateChange((event, session) => {
   if(event === "PASSWORD_RECOVERY"){
-    // Користувач прийшов по recovery-лінку
+    isRecoveryMode = true;
+    currentSession = session || currentSession;
+
     showResetCard(true);
+    setAuthUI(currentSession, { recovery: true });
+
+    // важливо: НЕ ініціалізуємо планер/roster/DB
+    clearAppOnLogout();
   }
 });
 
@@ -1008,35 +1044,43 @@ function isLoggedIn(){
   return !!currentSession?.user;
 }
 
-function setAuthUI(session){
-const authCard = document.getElementById("authCard");
-const loginBlock = document.getElementById("loginFields");
-const authState = document.getElementById("authStatus");
-const btnLogout = document.getElementById("btnLogout");
+function setAuthUI(session, opts = {}){
+  const authCard = document.getElementById("authCard");
+  const loginBlock = document.getElementById("loginFields");
+  const authState = document.getElementById("authStatus");
+  const btnLogout = document.getElementById("btnLogout");
+  const afterLogin = document.getElementById("afterLogin");
 
-// ✅ ОЦЕ ГОЛОВНЕ: правильний контейнер "після логіну"
-const afterLogin = document.getElementById("afterLogin");
+  const recovery = !!opts.recovery;
+  const loggedIn = !!session?.user && !recovery;
 
-const loggedIn = !!session?.user;
+  if(authCard) authCard.style.display = "block";
 
-if(authCard) authCard.style.display = "block";
-if(loginBlock) loginBlock.style.display = loggedIn ? "none" : "flex";
-if(btnLogout) btnLogout.style.display = loggedIn ? "inline-flex" : "none";
-if(afterLogin) afterLogin.style.display = loggedIn ? "block" : "none";
+  if(recovery){
+    if(loginBlock) loginBlock.style.display = "none";
+    if(btnLogout) btnLogout.style.display = "none";
+    if(afterLogin) afterLogin.style.display = "none";
+    if(authState) authState.textContent = "Password recovery: set a new password";
+    return;
+  }
 
-if(authState){
-authState.textContent = loggedIn
-? `Logged in: ${session.user.email}`
-: "Not logged in";
-}
+  if(loginBlock) loginBlock.style.display = loggedIn ? "none" : "flex";
+  if(btnLogout) btnLogout.style.display = loggedIn ? "inline-flex" : "none";
+  if(afterLogin) afterLogin.style.display = loggedIn ? "block" : "none";
 
-// (опційно) якщо розлогінились — прибрати старий DOM тижнів
-if(!loggedIn){
-const n = document.getElementById("nextWeekCard");
-const t = document.getElementById("thisWeekCard");
-if(n) n.innerHTML = "";
-if(t) t.innerHTML = "";
-}
+  if(authState){
+    authState.textContent = loggedIn
+      ? `Logged in: ${session.user.email}`
+      : "Not logged in";
+  }
+
+  // якщо розлогінились — прибрати DOM тижнів
+  if(!loggedIn){
+    const n = document.getElementById("nextWeekCard");
+    const t = document.getElementById("thisWeekCard");
+    if(n) n.innerHTML = "";
+    if(t) t.innerHTML = "";
+  }
 }
 
 
@@ -3076,12 +3120,23 @@ function clearAppOnLogout(){
 
 
 async function applyAuthSession(session){
+  // на випадок, якщо URL ще містить type=recovery
+  if(detectRecoveryFromUrl()) isRecoveryMode = true;
+
   currentSession = session || null;
+
+  if(isRecoveryMode){
+    setAuthUI(currentSession, { recovery: true });
+    showResetCard(true);
+    clearAppOnLogout();
+    return; // НЕ render/init weeks
+  }
+
   setAuthUI(currentSession);
 
   if(isLoggedIn()){
     await initAfterLogin();
-  } else {
+  }else{
     clearAppOnLogout();
   }
 
