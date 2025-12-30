@@ -1206,38 +1206,6 @@ document.getElementById("btnLogout").addEventListener("click", async (e) => {
 let TEAM = [];      // [{ id (uuid), name, role: "employee"|"manager", email }]
 let EMAILS = {};    // { [uuid]: email }
 
-// ✅ legacy email mapping (для міграції старих ключів у JSON)
-const LEGACY_EMAILS = {
-  u1: "a.pryshchepchuk@farmak.ua",
-  u2: "V.Olefir@farmak.ua",
-  u3: "a.mashyn@farmak.ua",
-  u4: "o.baksheiev@farmak.ua",
-  m1: "a.pryshchepchuk@farmak.ua"
-};
-
-let LEGACY_ID_MAP = {}; // { u1: <uuid>, ... }
-
-function isUuid(v){
-  return typeof v === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
-
-function buildLegacyIdMap(){
-  const map = {};
-  for(const [legacyId, email] of Object.entries(LEGACY_EMAILS)){
-    const p = (PROFILES || []).find(x =>
-      (x.email || "").toLowerCase() === String(email || "").toLowerCase()
-    );
-    if(p?.id) map[legacyId] = p.id;
-  }
-  LEGACY_ID_MAP = map;
-}
-
-function mapUserId(uid){
-  if(!uid) return uid;
-  if(isUuid(uid)) return uid;
-  return LEGACY_ID_MAP[uid] || uid;
-}
 
 function buildTeamFromProfiles(){
   const list = (PROFILES || []).map(p => {
@@ -1755,51 +1723,6 @@ function initWeekKeys(){
     localStorage.setItem(LS_KEY, JSON.stringify(state));
   }
 }
-
-/** =============================
- * 5.5) Legacy ID migration (u1/u2/... -> uuid)
- *  - якщо у старих збереженнях (LS/DB) є ключі u1/u2, ми конвертуємо їх у uuid з profiles
- * ============================= */
-
-function migrateUserMap(obj){
-  const out = {};
-  for(const [uid, val] of Object.entries(obj || {})){
-    out[mapUserId(uid)] = val;
-  }
-  return out;
-}
-
-function migrateDateUserMap(dateMap){
-  const out = {};
-  for(const [date, day] of Object.entries(dateMap || {})){
-    const nd = {};
-    for(const [uid, val] of Object.entries(day || {})){
-      nd[mapUserId(uid)] = val;
-    }
-    out[date] = nd;
-  }
-  return out;
-}
-
-function migrateWeekIds(week){
-  if(!week) return week;
-  week.reservations = migrateDateUserMap(week.reservations);
-  week.dayOff = migrateDateUserMap(week.dayOff);
-  if(week.approvedBy) week.approvedBy = mapUserId(week.approvedBy);
-  return week;
-}
-
-function migrateStateIds(){
-  if(!state) return;
-  state.tokens = migrateUserMap(state.tokens);
-  state.stats = migrateUserMap(state.stats);
-
-  // migrate all cached weeks
-  for(const [ws, w] of Object.entries(state.weeks || {})){
-    state.weeks[ws] = migrateWeekIds(w);
-  }
-}
-
 
 /** =============================
  * 4) UI init
@@ -3116,7 +3039,6 @@ async function initAfterLogin(){
   // 1) profiles -> TEAM
   await refreshProfilesCache();
   buildTeamFromProfiles();
-  buildLegacyIdMap();
 
   // 2) UI for "me" (hidden selector + label)
   initRosterUI();
@@ -3124,7 +3046,6 @@ async function initAfterLogin(){
 
   // 3) state + migration
   if(!state) state = loadState();
-  migrateStateIds();
 
   // 4) week keys + initial weeks
   initWeekKeys();
@@ -3140,7 +3061,6 @@ function clearAppOnLogout(){
   stopRealtime();
   TEAM = [];
   EMAILS = {};
-  LEGACY_ID_MAP = {};
 
   const meName = document.getElementById("meName");
   if(meName){
