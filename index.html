@@ -686,6 +686,29 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   margin-left: auto;
   padding-right: 10px;
 }
+
+/* Mobile: calendar scroll instead of squeezing */
+.weekScroller{
+  width: 100%;
+}
+
+@media (max-width: 720px){
+  .weekScroller{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px; /* щоб було зручно скролити */
+  }
+
+  /* грід не стискаємо — хай має мінімальну ширину */
+  .weekScroller .grid{
+    min-width: 980px; /* підігнати: 900–1100 */
+  }
+
+  /* плашки не повинні вилазити за межі */
+  .slot, .slotRight, .tag{
+    max-width: 100%;
+  }
+}
   
 </style>
 </head>
@@ -2113,10 +2136,11 @@ const editable =
   (me.role !== "manager");
 
 
-  // ТІЛЬКИ грід (без шапки/рамки/текстів)
-  container.innerHTML = `
+container.innerHTML = `
+  <div class="weekScroller">
     <div class="grid" id="${containerId}_grid"></div>
-  `;
+  </div>
+`;
 
   const grid = document.getElementById(`${containerId}_grid`);
   grid.innerHTML = "";
