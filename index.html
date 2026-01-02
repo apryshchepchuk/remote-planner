@@ -167,6 +167,30 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   font-weight: 700;
 }
 
+.fillChip{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:4px 10px;
+  border-radius: 999px;
+  border:1px solid rgba(229,231,235,.95);
+  background:#fff;
+  font-size:12px;
+  font-weight:700;
+  color: var(--text);
+}
+.fillChip.done{
+  background: var(--ok-weak);
+  border-color: rgba(15,118,110,.25);
+  color: #0B3A35;
+}
+.fillChip.todo{
+  background: rgba(2,6,23,.04);
+  border-color: rgba(229,231,235,.95);
+  color: var(--muted);
+}
+
+  
 .day.dayoff{
   background: linear-gradient(180deg, #FFFFFF 0%, rgba(37,99,235,.06) 100%);
   border-color: rgba(37,99,235,.25);
@@ -771,7 +795,16 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 <button id="btnReset" class="bad" style="display:none">Скинути все (local)</button>
       <span id="mgrControls" class="row" style="gap:8px;"></span>
     </div>
-    </div>
+    <div class="hr"></div>
+  <div class="row" id="weekFillBar" style="gap:8px; flex-wrap:wrap; align-items:center;">
+    <span class="badge">Заповнення графіка (наступний тиждень):</span>
+    <span id="filledCount" class="pill">—</span>
+    <div id="filledChips" class="row" style="gap:6px; flex-wrap:wrap;"></div>
+    <span class="right"></span>
+
+    <!-- тільки для працівника -->
+    <button id="btnToggleFilled" class="primary onlyEmployee" type="button">✅ Я заповнив(ла)</button>
+  </div>
 
   <div style="height:12px"></div>
 
@@ -833,6 +866,114 @@ function detectRecoveryFromUrl(){
 // якщо сторінка відкрита з recovery-лінка
 isRecoveryMode = detectRecoveryFromUrl();
 
+ // ===== Week "filled" tracking (planner_submissions) =====
+const SUBMISSIONS_TABLE = "planner_submissions";
+let nextWeekSubmissions = {}; // { [userId]: submitted_at_iso }
+
+function isEmployee(u){ return u && u.role !== "manager"; }
+
+function allEmployeesIds(){
+  return TEAM.filter(isEmployee).map(u => u.id);
+}
+
+function mySubmitted(){
+  const me = currentUser();
+  if(!me) return false;
+  return !!nextWeekSubmissions[me.id];
+}
+
+async function loadNextWeekSubmissions(){
+  if(!isLoggedIn()) return;
+
+  const { data, error } = await sb
+    .from(SUBMISSIONS_TABLE)
+    .select("user_id,submitted_at")
+    .eq("week_start", nextWeekStart);
+
+  if(error){
+    console.warn("loadNextWeekSubmissions error:", error);
+    nextWeekSubmissions = {};
+    return;
+  }
+
+  nextWeekSubmissions = {};
+  (data || []).forEach(r => { nextWeekSubmissions[r.user_id] = r.submitted_at; });
+}
+
+async function toggleMySubmission(){
+  const me = currentUser();
+  if(!me || me.role === "manager") return;
+
+  if(mySubmitted()){
+    // unmark
+    const { error } = await sb
+      .from(SUBMISSIONS_TABLE)
+      .delete()
+      .eq("week_start", nextWeekStart)
+      .eq("user_id", me.id);
+
+    if(error){
+      console.error("unsubmit error:", error);
+      alert("Не вдалося скасувати позначку. Дивись Console.");
+      return;
+    }
+  }else{
+    // mark
+    const { error } = await sb
+      .from(SUBMISSIONS_TABLE)
+      .insert({ week_start: nextWeekStart, user_id: me.id });
+
+    if(error){
+      console.error("submit error:", error);
+      alert("Не вдалося зберегти позначку. Дивись Console.");
+      return;
+    }
+  }
+
+  // UI швидко оновимо (realtime теж підтягне)
+  await loadNextWeekSubmissions();
+  render();
+}
+
+function renderFillBar(){
+  const bar = document.getElementById("weekFillBar");
+  if(!bar) return;
+
+  const chips = document.getElementById("filledChips");
+  const count = document.getElementById("filledCount");
+  const btn = document.getElementById("btnToggleFilled");
+
+  if(!isLoggedIn() || !TEAM.length){
+    if(count) count.textContent = "—";
+    if(chips) chips.innerHTML = "";
+    if(btn) btn.style.display = "none";
+    return;
+  }
+
+  const emps = TEAM.filter(isEmployee);
+  const done = emps.filter(u => !!nextWeekSubmissions[u.id]).length;
+
+  if(count) count.textContent = `${done}/${emps.length}`;
+
+  if(chips){
+    chips.innerHTML = emps.map(u => {
+      const ok = !!nextWeekSubmissions[u.id];
+      return `<span class="fillChip ${ok ? "done" : "todo"}">${ok ? "✅" : "⏳"} ${escapeHtml(u.name)}</span>`;
+    }).join("");
+  }
+
+  const me = currentUser();
+  if(btn){
+    if(me?.role === "manager"){
+      btn.style.display = "none";
+    }else{
+      btn.style.display = "";
+      btn.textContent = mySubmitted() ? "↩️ Скасувати (я ще правлю)" : "✅ Я заповнив(ла)";
+    }
+  }
+}
+
+  
 /** =============================
  * Auth bootstrap: catch INITIAL_SESSION early (page refresh)
  * ============================= */
@@ -1729,7 +1870,12 @@ if(btnReset){
   btnReset.onclick = null;         // на всяк випадок
 }
 
+const btnToggleFilled = document.getElementById("btnToggleFilled");
+if(btnToggleFilled){
+  btnToggleFilled.addEventListener("click", toggleMySubmission);
+}
 
+  
 const btnICS = document.getElementById("btnICS");
 if(btnICS){
   btnICS.onclick = () => {
@@ -2036,6 +2182,7 @@ if(me.role === "manager"){
   renderWeekCard("nextWeekCard", nextWeekStart, false);  // editable for employees (unless locked)
 
 notifyOverridesForMe(nextWeekStart);
+  renderFillBar();  
 }
 
 function renderManagerControls(){
@@ -2064,6 +2211,14 @@ function renderManagerControls(){
       if(w.status !== "draft"){
         alert("Тиждень уже не в статусі draft. Повторний approve не потрібен.");
         return;
+      }
+      
+      // anti-early-approve
+      const emps = TEAM.filter(u=>u.role!=="manager");
+      const done = emps.filter(u => !!nextWeekSubmissions[u.id]).length;
+      if(done < emps.length){
+        const ok = confirm(`Ще не всі заповнили графік (${done}/${emps.length}). Все одно Approve?`);
+        if(!ok) return;
       }
 
       // remote_pending -> remote
@@ -2801,6 +2956,7 @@ function autoDownloadSummaryEml(weekStartIso){
 
 let rtChannel = null;
 let rtChannelThis = null; // current week mirror
+  let rtChannelSubs = null;
 
 let rtApplying = false;
 
@@ -2830,7 +2986,27 @@ function startRealtimeForThisWeek(){
     })
     .subscribe();
 }
+  
+function startRealtimeForSubmissions(){
+  if(rtChannelSubs) return;
+  if(!isLoggedIn()) return;
 
+  rtChannelSubs = sb
+    .channel(`planner_submissions:${nextWeekStart}`)
+    .on("postgres_changes", {
+      event: "*",
+      schema: "public",
+      table: "planner_submissions",
+      filter: `week_start=eq.${nextWeekStart}`,
+    }, async () => {
+      // найнадійніше — просто перечитати
+      await loadNextWeekSubmissions();
+      render();
+    })
+    .subscribe();
+}
+
+  
 function stopRealtime(){
   try{
     if(rtChannel){
@@ -2849,6 +3025,16 @@ function stopRealtime(){
   }catch(e){
     console.warn("stopRealtime(this) error:", e);
   }
+   
+  try{
+    if(rtChannelSubs){
+      sb.removeChannel(rtChannelSubs);
+      rtChannelSubs = null;
+    }
+  }catch(e){
+    console.warn("stopRealtime(subs) error:", e);
+  }
+
 }
 
 function startRealtimeForNextWeek(){
@@ -2947,8 +3133,12 @@ async function initAfterLogin(){
   // 5) DB week + realtime
   await loadThisWeekFromDB();
   await loadNextWeekFromDB();
+  await loadNextWeekSubmissions();
+
   startRealtimeForNextWeek();
   startRealtimeForThisWeek();
+  startRealtimeForSubmissions();
+
 }
 
 function clearAppOnLogout(){
