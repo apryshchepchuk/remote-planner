@@ -733,6 +733,68 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     max-width: 100%;
   }
 }
+
+/* === Fill button UX: не виглядає "вже натиснутою" === */
+#btnToggleFilled{
+  position: relative;
+  font-weight: 800;
+}
+
+/* Стан: треба натиснути (після заповнення) */
+#btnToggleFilled.fillTodo{
+  background: #fff !important;
+  color: var(--accent) !important;
+  border-color: rgba(37,99,235,.45) !important;
+  box-shadow: 0 0 0 4px rgba(37,99,235,.10);
+}
+
+/* легкий “call-to-action” на hover */
+#btnToggleFilled.fillTodo:hover{
+  background: rgba(37,99,235,.06) !important;
+  border-color: rgba(37,99,235,.60) !important;
+  box-shadow: 0 0 0 6px rgba(37,99,235,.14), 0 10px 24px rgba(15,23,42,.10);
+}
+
+/* підказка при наведенні (ненав’язливо) */
+#btnToggleFilled.fillTodo::after{
+  content: "Натисни після вибору днів";
+  position: absolute;
+  left: 50%;
+  bottom: -26px;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(37,99,235,.25);
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 10px 24px rgba(15,23,42,.08);
+  transition: opacity var(--t) ease, transform var(--t) ease;
+}
+
+#btnToggleFilled.fillTodo:hover::after{
+  opacity: 1;
+  transform: translateX(-50%) translateY(-2px);
+}
+
+/* Стан: вже підтверджено (кнопка тепер = “скасувати”) */
+#btnToggleFilled.fillDone{
+  background: rgba(2,6,23,.04) !important;
+  color: var(--muted) !important;
+  border-color: rgba(229,231,235,.95) !important;
+  box-shadow: none !important;
+}
+
+#btnToggleFilled.fillDone:hover{
+  background: rgba(190,18,60,.06) !important;
+  border-color: rgba(190,18,60,.22) !important;
+  color: #7F1D1D !important;
+}
+
   
 </style>
 </head>
@@ -969,6 +1031,8 @@ function renderFillBar(){
     }else{
       btn.style.display = "";
       btn.textContent = mySubmitted() ? "↩️ Скасувати (я ще правлю)" : "✅ Я заповнив(ла)";
+      btn.classList.toggle("fillDone", mySubmitted());
+btn.classList.toggle("fillTodo", !mySubmitted());
     }
   }
 }
@@ -2882,14 +2946,26 @@ function buildSummaryHtmlTable_NoIcons(weekStartIso){
         mode==="remote_pending" ? STATUS.pending() :
         STATUS.office();
 
-      return `<td style="padding:10px;border:1px solid #E5E7EB;text-align:center;">${cell}</td>`;
-    }).join("");
+    const ov = w.overrides?.[x.dIso]?.[u.id];   // може бути true або об'єкт
+    const changedMark = ov
+      ? `<div style="margin-top:6px;font-size:11px;font-weight:700;color:#8a2c2c;line-height:1.1;">
+           Змінено керівником
+         </div>`
+      : "";
 
-    return `<tr>
-      <td style="padding:10px;border:1px solid #E5E7EB;font-weight:700;white-space:nowrap;">${u.name}</td>
-      ${tds}
-    </tr>`;
+    return `<td style="padding:10px;border:1px solid #E5E7EB;text-align:center;">
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+                ${cell}
+                ${changedMark}
+              </div>
+            </td>`;
   }).join("");
+
+  return `<tr>
+    <td style="padding:10px;border:1px solid #E5E7EB;font-weight:700;white-space:nowrap;">${u.name}</td>
+    ${tds}
+  </tr>`;
+}).join("");
 
   const range = `${dates[0].label} – ${dates[4].label}`;
   const approver = (w.approvedBy ? (PROFILE_BY_ID[w.approvedBy] || null) : null);
