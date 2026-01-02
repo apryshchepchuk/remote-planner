@@ -1454,6 +1454,7 @@ function weekToRow(weekStartIso){
     approved_at: (w.status === "approved") ? (w.approvedAt || new Date().toISOString()) : null,
     reservations: w.reservations || {},
     day_off: w.dayOff || {},
+    overrides: w.overrides || {},     
   };
 }
 
@@ -1465,7 +1466,7 @@ function rowToWeek(row){
     approvedAt: row.approved_at || null,
     reservations: row.reservations || {},
     dayOff: row.day_off || {},
-    overrides: {}, // поки не зберігаємо в БД (пізніше додамо, якщо треба)
+    overrides: row.overrides || {}, 
     duels: {},
     dayMeta: {},
   };
