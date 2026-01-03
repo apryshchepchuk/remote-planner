@@ -802,7 +802,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 <body>
 <div class="wrap">
   <div class="top">
-    <h1>Графік офіс/віддалено</h1>
+    <h1>Графік офіс/remote</h1>
   </div>
   
 <div class="card" id="authCard">
@@ -865,7 +865,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     <span class="right"></span>
 
     <!-- тільки для працівника -->
-    <button id="btnToggleFilled" class="primary onlyEmployee" type="button">Я заповнив</button>
+    <button id="btnToggleFilled" class="primary onlyEmployee" type="button">✅ Я заповнив(ла)</button>
   </div>
 
   <div style="height:12px"></div>
@@ -1867,10 +1867,10 @@ function setManagerOverride(weekStartIso, dateIso, userId, newMode){
 }
 
 function formatModeUA(mode){
-  if(mode === "remote") return "Віддалено";
-  if(mode === "remote_pending") return "Віддалено (OK?)";
+  if(mode === "remote") return "Remote";
+  iif(mode === "remote_pending") return "Remote (OK?)";
   if(mode === "vacation") return "Відпустка";
-  return "Офіс";
+  return "Office";
 }
 
 
