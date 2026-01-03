@@ -795,6 +795,70 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   color: #7F1D1D !important;
 }
 
+  /* === Manager YTD stats === */
+#mgrStatsBody{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.statRow{
+  display:grid;
+  grid-template-columns: 180px 1fr 74px 74px;
+  gap:10px;
+  align-items:center;
+}
+
+@media (max-width: 720px){
+  .statRow{
+    grid-template-columns: 1fr;
+    gap:6px;
+  }
+}
+
+.statName{
+  font-weight:750;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.statBars{
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+
+.barTrack{
+  position:relative;
+  flex:1 1 auto;
+  height:10px;
+  border-radius: 999px;
+  background: rgba(2,6,23,.06);
+  overflow:hidden;
+}
+
+.barFill{
+  position:absolute;
+  left:0; top:0; bottom:0;
+  width:0%;
+  border-radius:999px;
+}
+
+.barFill.remote{ background: rgba(37,99,235,.55); }
+.barFill.vacation{ background: rgba(15,118,110,.55); }
+
+.statNum{
+  text-align:right;
+  font-weight:800;
+  font-size:12px;
+  color: var(--text);
+}
+.statNum span{
+  color: var(--muted);
+  font-weight:700;
+  margin-left:6px;
+}
   
 </style>
 </head>
@@ -856,6 +920,28 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 
 <button id="btnReset" class="bad" style="display:none">Скинути все (local)</button>
       <span id="mgrControls" class="row" style="gap:8px;"></span>
+      <!-- Manager: YTD stats -->
+<div id="mgrStatsCard" class="card" style="display:none; margin-top:12px;">
+  <div class="row" style="width:100%; align-items:center;">
+    <b>Статистика за рік (YTD)</b>
+    <span class="right"></span>
+    <span id="mgrStatsHint" class="muted small"></span>
+    <button id="btnMgrStatsRefresh" type="button">Оновити</button>
+  </div>
+  <div class="hr"></div>
+
+  <div class="row" style="gap:10px; flex-wrap:wrap;">
+    <span class="pill" id="mgrStatsTotalRemote">Remote: —</span>
+    <span class="pill" id="mgrStatsTotalVacation">Відпустка: —</span>
+  </div>
+
+  <div style="height:10px"></div>
+  <div id="mgrStatsBody"></div>
+
+  <div class="muted small" style="margin-top:10px;">
+    Рахує всі записи з planner_weeks за поточний календарний рік.
+  </div>
+</div>
     </div>
     <div class="hr"></div>
   <div class="row" id="weekFillBar" style="gap:8px; flex-wrap:wrap; align-items:center;">
@@ -2215,6 +2301,7 @@ function render(){
 
   ensureMonthlyTokens();
 renderManagerControls();
+  renderManagerYtdStats();
 
   // top counters for NEXT week only (planning)
   const me = currentUser();
@@ -2341,6 +2428,14 @@ function renderManagerControls(){
 
   render();
 };
+  }
+    // stats refresh button (manager)
+  const btnStats = document.getElementById("btnMgrStatsRefresh");
+  if(btnStats){
+    btnStats.onclick = async () => {
+      await loadYtdStatsFromDB();
+      renderManagerYtdStats();
+    };
   }
 }
 
@@ -2820,7 +2915,157 @@ function downloadText(filename, text, mime){
   a.remove();
   URL.revokeObjectURL(url);
 }
+/** =============================
+ * 5.8) Manager YTD stats (Remote/Vacation)
+ * ============================= */
 
+let ytdStats = null;       // { [userId]: { remote, vacation } }
+let ytdStatsYear = null;
+let ytdStatsLoading = false;
+let ytdStatsTimer = null;
+
+function yearBounds(){
+  const y = new Date().getFullYear();
+  return { y, start: `${y}-01-01`, end: `${y+1}-01-01` };
+}
+
+function computeYtdStats(rows){
+  const stats = {};
+  TEAM.filter(isEmployee).forEach(u => stats[u.id] = { remote:0, vacation:0 });
+
+  for(const row of (rows || [])){
+    const res = row.reservations || {};
+    const off = row.day_off || {};
+
+    for(const [dateIso, day] of Object.entries(res)){
+      // якщо день вихідний — ігноруємо (у всіх)
+      if(off && off[dateIso]) continue;
+      if(!day) continue;
+
+      for(const [uid, mode] of Object.entries(day)){
+        if(!stats[uid]) continue;
+
+        if(mode === "remote" || mode === "remote_pending"){
+          stats[uid].remote++;
+        }else if(mode === "vacation"){
+          stats[uid].vacation++;
+        }
+      }
+    }
+  }
+  return stats;
+}
+
+async function loadYtdStatsFromDB(){
+  const me = currentUser();
+  if(!isLoggedIn() || !me || me.role !== "manager") return;
+
+  if(ytdStatsLoading) return;
+  ytdStatsLoading = true;
+
+  const hint = document.getElementById("mgrStatsHint");
+  if(hint) hint.textContent = "Завантажую…";
+
+  try{
+    const { y, start, end } = yearBounds();
+
+    const { data, error } = await sb
+      .from("planner_weeks")
+      .select("week_start,reservations,day_off")
+      .gte("week_start", start)
+      .lt("week_start", end);
+
+    if(error){
+      console.warn("loadYtdStatsFromDB error:", error);
+      ytdStats = null;
+      ytdStatsYear = y;
+      return;
+    }
+
+    ytdStatsYear = y;
+    ytdStats = computeYtdStats(data || []);
+  } finally {
+    ytdStatsLoading = false;
+    if(hint) hint.textContent = ytdStatsYear ? `Рік: ${ytdStatsYear}` : "";
+  }
+}
+
+function queueYtdStatsRefresh(){
+  const me = currentUser();
+  if(!me || me.role !== "manager") return;
+
+  clearTimeout(ytdStatsTimer);
+  ytdStatsTimer = setTimeout(async () => {
+    await loadYtdStatsFromDB();
+    renderManagerYtdStats();
+  }, 350);
+}
+
+function renderManagerYtdStats(){
+  const card = document.getElementById("mgrStatsCard");
+  const body = document.getElementById("mgrStatsBody");
+  if(!card || !body) return;
+
+  const me = currentUser();
+  if(!isLoggedIn() || !me || me.role !== "manager"){
+    card.style.display = "none";
+    return;
+  }
+
+  card.style.display = "block";
+
+  if(!ytdStats){
+    body.innerHTML = `<div class="muted">Немає даних (або немає доступу до planner_weeks). Натисни “Оновити”.</div>`;
+    return;
+  }
+
+  const emps = TEAM.filter(isEmployee);
+
+  // totals + max for scaling
+  let totalRemote = 0, totalVacation = 0;
+  let maxRemote = 0, maxVacation = 0;
+
+  for(const u of emps){
+    const s = ytdStats[u.id] || { remote:0, vacation:0 };
+    totalRemote += s.remote;
+    totalVacation += s.vacation;
+    maxRemote = Math.max(maxRemote, s.remote);
+    maxVacation = Math.max(maxVacation, s.vacation);
+  }
+
+  const totalRemoteEl = document.getElementById("mgrStatsTotalRemote");
+  const totalVacationEl = document.getElementById("mgrStatsTotalVacation");
+  if(totalRemoteEl) totalRemoteEl.textContent = `Remote: ${totalRemote}`;
+  if(totalVacationEl) totalVacationEl.textContent = `Відпустка: ${totalVacation}`;
+
+  // sort: remote desc, then vacation desc
+  const rows = emps
+    .map(u => ({ u, s: ytdStats[u.id] || { remote:0, vacation:0 } }))
+    .sort((a,b) => (b.s.remote - a.s.remote) || (b.s.vacation - a.s.vacation) || String(a.u.name).localeCompare(String(b.u.name),"uk"));
+
+  body.innerHTML = rows.map(({u, s}) => {
+    const rPct = maxRemote ? Math.round((s.remote / maxRemote) * 100) : 0;
+    const vPct = maxVacation ? Math.round((s.vacation / maxVacation) * 100) : 0;
+
+    return `
+      <div class="statRow">
+        <div class="statName" title="${escapeHtml(u.name)}">${escapeHtml(u.name)}</div>
+
+        <div class="statBars">
+          <div class="barTrack" title="Remote: ${s.remote}">
+            <div class="barFill remote" style="width:${rPct}%"></div>
+          </div>
+          <div class="barTrack" title="Відпустка: ${s.vacation}">
+            <div class="barFill vacation" style="width:${vPct}%"></div>
+          </div>
+        </div>
+
+        <div class="statNum">${s.remote}<span>R</span></div>
+        <div class="statNum">${s.vacation}<span>V</span></div>
+      </div>
+    `;
+  }).join("");
+}
 /** =============================
  * 10) SUMMARY EMAIL (EML) — for manager approve
  * ============================= */
@@ -3057,6 +3302,7 @@ function startRealtimeForThisWeek(){
         localStorage.setItem(LS_KEY, JSON.stringify(state));
 
         if(!rtApplying) render();
+        queueYtdStatsRefresh();
       }catch(e){
         console.error("RT thisWeek apply failed:", e);
       }
@@ -3170,7 +3416,7 @@ function startRealtimeForNextWeek(){
 
           // write only to localStorage (NO saveState -> no DB write)
           localStorage.setItem(LS_KEY, JSON.stringify(state));
-
+queueYtdStatsRefresh();
           // refresh UI (so everybody sees the change)
           render();
         }catch(e){
@@ -3215,7 +3461,12 @@ async function initAfterLogin(){
   startRealtimeForNextWeek();
   startRealtimeForThisWeek();
   startRealtimeForSubmissions();
-
+  // manager YTD stats
+  const me = currentUser();
+  if(me?.role === "manager"){
+    await loadYtdStatsFromDB();
+    renderManagerYtdStats();
+  }
 }
 
 function clearAppOnLogout(){
