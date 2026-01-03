@@ -859,7 +859,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     </div>
     <div class="hr"></div>
   <div class="row" id="weekFillBar" style="gap:8px; flex-wrap:wrap; align-items:center;">
-    <span class="badge">Заповнення графіка (наступний тиждень):</span>
+    <span class="badge">Заповнення графіка:</span>
     <span id="filledCount" class="pill">—</span>
     <div id="filledChips" class="row" style="gap:6px; flex-wrap:wrap;"></div>
     <span class="right"></span>
@@ -1030,7 +1030,7 @@ function renderFillBar(){
       btn.style.display = "none";
     }else{
       btn.style.display = "";
-      btn.textContent = mySubmitted() ? "↩️ Скасувати (я ще правлю)" : "✅ Я заповнив(ла)";
+      btn.textContent = mySubmitted() ? "↩️ Скасувати (я ще правлю)" : "📝 Підтвердити заповнення";
       btn.classList.toggle("fillDone", mySubmitted());
 btn.classList.toggle("fillTodo", !mySubmitted());
     }
