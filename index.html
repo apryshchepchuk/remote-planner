@@ -935,19 +935,8 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   <div id="mgrStatsContent" style="display:none;">
     <div class="hr"></div>
 
-    <div class="row" style="gap:10px; flex-wrap:wrap;">
-      <span class="pill" id="mgrStatsTotalRemote">Remote: —</span>
-      <span class="pill" id="mgrStatsTotalOffice">Office: —</span>
-      <span class="pill" id="mgrStatsTotalVacation">Відпустка: —</span>
-      <span class="pill" id="mgrStatsTotalRO">R/O: —</span>
-    </div>
-
-    <div style="height:10px"></div>
     <div id="mgrStatsBody"></div>
 
-    <div class="muted small" style="margin-top:10px;">
-      Рахує всі записи з planner_weeks за поточний календарний рік.
-    </div>
   </div>
 </div>
     <div class="hr"></div>
@@ -3053,15 +3042,6 @@ for(const u of emps){
   maxOffice = Math.max(maxOffice, s.office);
   maxVacation = Math.max(maxVacation, s.vacation);
 }
-
-const totalRemoteEl = document.getElementById("mgrStatsTotalRemote");
-const totalOfficeEl = document.getElementById("mgrStatsTotalOffice");
-const totalVacationEl = document.getElementById("mgrStatsTotalVacation");
-const totalROEl = document.getElementById("mgrStatsTotalRO");
-
-if(totalRemoteEl) totalRemoteEl.textContent = `Remote: ${totalRemote}`;
-if(totalOfficeEl) totalOfficeEl.textContent = `Office: ${totalOffice}`;
-if(totalVacationEl) totalVacationEl.textContent = `Відпустка: ${totalVacation}`;
 
 // співвідношення remote/office (числове + % remote)
 const denom = totalRemote + totalOffice;
