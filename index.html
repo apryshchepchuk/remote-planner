@@ -860,6 +860,30 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   font-weight:700;
   margin-left:6px;
 }
+
+/* === Fill chips: тільки іконка + ім'я (без бейдж-фону) === */
+#filledChips .fillChip{
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+
+  padding: 0 !important;
+  border-radius: 0 !important;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Трохи “підказуємо” стан без фону */
+#filledChips .fillChip.todo{
+  color: var(--muted);
+  opacity: .8;
+}
+#filledChips .fillChip.done{
+  color: var(--text);
+  font-weight: 700;
+}
   
 </style>
 </head>
@@ -942,7 +966,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     <div class="hr"></div>
   <div class="row" id="weekFillBar" style="gap:8px; flex-wrap:wrap; align-items:center;">
     <span class="badge">Заповнення графіка:</span>
-    <span id="filledCount" class="pill">—</span>
     <div id="filledChips" class="row" style="gap:6px; flex-wrap:wrap;"></div>
     <span class="right"></span>
 
