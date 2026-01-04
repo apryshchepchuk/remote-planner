@@ -2804,34 +2804,17 @@ return;
 }
 
 function downloadText(filename, text, mime){
-  const blob = new Blob([text], {type: mime});
+  const blob = new Blob([text], { type: mime || "text/plain" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = filename;
+  a.href = url;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
 }
 
-  const w = getWeek(weekStartIso);
-  if(!(w.status === "approved" || w.status === "locked")){
-    alert("Цей тиждень ще не затверджено. Доступно лише після Approve.");
-    return;
-  }
-
-  const ics = buildICSForUserWeek(me.id, weekStartIso);
-  if(!ics){
-    alert("У тебе немає Remote-днів у затвердженому тижні.");
-    return;
-  }
-
-  const label = (which === "this") ? "thisweek" : "nextweek";
-  const fname = `remote_${safeFilename(me.name)}_${label}_${weekStartIso}.ics`;
-  downloadText(fname, ics, "text/calendar");
-}
-
-  
 /** =============================
  * 5.8) Manager YTD stats (Remote/Vacation)
  * ============================= */
@@ -3449,12 +3432,6 @@ function clearAppOnLogout(){
   }
 }
 
-const btnAddRemoteOutlook = document.getElementById("btnAddRemoteOutlook");
-if(btnAddRemoteOutlook){
-  btnAddRemoteOutlook.addEventListener("click", downloadMyRemoteOutlookIcs);
-}
-
-  
 async function applyAuthSession(session){
   // на випадок, якщо URL ще містить type=recovery
   if(detectRecoveryFromUrl()) isRecoveryMode = true;
@@ -3479,21 +3456,6 @@ async function applyAuthSession(session){
   render();
 }
 
-function updateRemoteOutlookButton(){
-  const btn = document.getElementById("btnAddRemoteOutlook");
-  if(!btn) return;
-
-  const uid = currentSession?.user?.id;
-  const w = getWeek(nextWeekStart);
-
-  const enabled = !!uid && (w.status === "approved");
-  btn.disabled = !enabled;
-  btn.title = enabled
-    ? "Згенерувати ICS для Remote-днів (approved week)"
-    : "Стане доступно після approve керівником";
-}
-
-  
 // Надійний старт після refresh:
 // - чекаємо INITIAL_SESSION (коли Supabase відновить сесію зі сховища)
 // - fallback: getSession()
