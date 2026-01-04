@@ -3028,25 +3028,15 @@ function renderManagerYtdStats(){
 
   const emps = TEAM.filter(isEmployee);
 
-  // totals + max for scaling
-let totalRemote = 0, totalOffice = 0, totalVacation = 0;
+  // max for scaling
 let maxRemote = 0, maxOffice = 0, maxVacation = 0;
 
 for(const u of emps){
   const s = ytdStats[u.id] || { remote:0, office:0, vacation:0 };
-  totalRemote += s.remote;
-  totalOffice += s.office;
-  totalVacation += s.vacation;
-
   maxRemote = Math.max(maxRemote, s.remote);
   maxOffice = Math.max(maxOffice, s.office);
   maxVacation = Math.max(maxVacation, s.vacation);
 }
-
-// співвідношення remote/office (числове + % remote)
-const denom = totalRemote + totalOffice;
-const pctR = denom ? Math.round((totalRemote / denom) * 100) : 0;
-if(totalROEl) totalROEl.textContent = `R/O: ${totalRemote}/${totalOffice} · ${pctR}%`;
 
   // sort: remote desc, then vacation desc
 const rows = emps
