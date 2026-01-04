@@ -1179,7 +1179,6 @@ btn.classList.toggle("fillTodo", !mySubmitted());
     }
   }
 }
-renderOutlookRemoteButtons();
 
   
 /** =============================
@@ -2138,6 +2137,43 @@ function hasPendingInDay(weekStartIso, dateIso){
 function currentUser(){
   const uid = currentSession?.user?.id || meSel?.value;
   return TEAM.find(u => u.id === uid);
+}
+function renderOutlookRemoteButtons(){
+  const btnThis = document.getElementById("btnOutlookRemoteThis");
+  const btnNext = document.getElementById("btnOutlookRemoteNext");
+  const btnLegacy = document.getElementById("btnAddRemoteOutlook"); // якщо залишаєш стару кнопку
+
+  // дефолт: усе вимкнено
+  if(btnThis) btnThis.disabled = true;
+  if(btnNext) btnNext.disabled = true;
+  if(btnLegacy) btnLegacy.disabled = true;
+
+  // ще не готово
+  if(!isLoggedIn() || !state || !thisWeekStart || !nextWeekStart) return;
+
+  const me = currentUser();
+  if(!me || me.role === "manager") return;
+
+  const wThis = getWeek(thisWeekStart);
+  const wNext = getWeek(nextWeekStart);
+
+  const okThis = (wThis.status === "approved" || wThis.status === "locked");
+  const okNext = (wNext.status === "approved" || wNext.status === "locked");
+
+  if(btnThis){
+    btnThis.disabled = !okThis;
+    btnThis.title = okThis ? "Завантажити ICS для Remote-днів (цей тиждень)" : "Доступно після Approve";
+  }
+  if(btnNext){
+    btnNext.disabled = !okNext;
+    btnNext.title = okNext ? "Завантажити ICS для Remote-днів (наступний тиждень)" : "Доступно після Approve";
+  }
+
+  // Якщо стару кнопку лишаєш — логічно прирівняти її до NEXT week
+  if(btnLegacy){
+    btnLegacy.disabled = !okNext;
+    btnLegacy.title = okNext ? "Згенерувати ICS для Remote-днів (approved next week)" : "Стане доступно після approve";
+  }
 }
 
 function winRate(uid){
@@ -3899,7 +3935,6 @@ sb.auth.onAuthStateChange(async (event, session) => {
 
   await applyAuthSession(session);
 });
-updateRemoteOutlookButton();
 // init
 boot();
 </script>
