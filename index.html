@@ -804,7 +804,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 
 .statRow{
   display:grid;
-  grid-template-columns: 180px 1fr 74px 74px;
+  grid-template-columns: 180px 1fr 64px 64px 64px 120px; /* R, O, V, R/O */
   gap:10px;
   align-items:center;
 }
@@ -847,6 +847,7 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 
 .barFill.remote{ background: rgba(37,99,235,.55); }
 .barFill.vacation{ background: rgba(15,118,110,.55); }
+.barFill.office{ background: rgba(51,65,85,.45); }
 
 .statNum{
   text-align:right;
@@ -926,23 +927,29 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     <b>Статистика за рік (YTD)</b>
     <span class="right"></span>
     <span id="mgrStatsHint" class="muted small"></span>
+    <button id="btnMgrStatsToggle" type="button">Розгорнути</button>
     <button id="btnMgrStatsRefresh" type="button">Оновити</button>
   </div>
-  <div class="hr"></div>
 
-  <div class="row" style="gap:10px; flex-wrap:wrap;">
-    <span class="pill" id="mgrStatsTotalRemote">Remote: —</span>
-    <span class="pill" id="mgrStatsTotalVacation">Відпустка: —</span>
-  </div>
+  <!-- ⬇️ ВЕСЬ КОНТЕНТ статистики ховаємо/показуємо -->
+  <div id="mgrStatsContent" style="display:none;">
+    <div class="hr"></div>
 
-  <div style="height:10px"></div>
-  <div id="mgrStatsBody"></div>
+    <div class="row" style="gap:10px; flex-wrap:wrap;">
+      <span class="pill" id="mgrStatsTotalRemote">Remote: —</span>
+      <span class="pill" id="mgrStatsTotalOffice">Office: —</span>
+      <span class="pill" id="mgrStatsTotalVacation">Відпустка: —</span>
+      <span class="pill" id="mgrStatsTotalRO">R/O: —</span>
+    </div>
 
-  <div class="muted small" style="margin-top:10px;">
-    Рахує всі записи з planner_weeks за поточний календарний рік.
+    <div style="height:10px"></div>
+    <div id="mgrStatsBody"></div>
+
+    <div class="muted small" style="margin-top:10px;">
+      Рахує всі записи з planner_weeks за поточний календарний рік.
+    </div>
   </div>
 </div>
-    </div>
     <div class="hr"></div>
   <div class="row" id="weekFillBar" style="gap:8px; flex-wrap:wrap; align-items:center;">
     <span class="badge">Заповнення графіка:</span>
@@ -2919,7 +2926,7 @@ function downloadText(filename, text, mime){
  * 5.8) Manager YTD stats (Remote/Vacation)
  * ============================= */
 
-let ytdStats = null;       // { [userId]: { remote, vacation } }
+let ytdStats = null;       // { [userId]: { remote, office, vacation } }
 let ytdStatsYear = null;
 let ytdStatsLoading = false;
 let ytdStatsTimer = null;
@@ -2931,28 +2938,38 @@ function yearBounds(){
 
 function computeYtdStats(rows){
   const stats = {};
-  TEAM.filter(isEmployee).forEach(u => stats[u.id] = { remote:0, vacation:0 });
+  TEAM.filter(isEmployee).forEach(u => stats[u.id] = { remote:0, office:0, vacation:0 });
 
   for(const row of (rows || [])){
     const res = row.reservations || {};
     const off = row.day_off || {};
 
-    for(const [dateIso, day] of Object.entries(res)){
-      // якщо день вихідний — ігноруємо (у всіх)
-      if(off && off[dateIso]) continue;
-      if(!day) continue;
+    // важливо: week_start як локальна дата без зсувів
+    const ws = new Date(String(row.week_start) + "T00:00:00");
 
-      for(const [uid, mode] of Object.entries(day)){
-        if(!stats[uid]) continue;
+    for(let i=0;i<5;i++){
+      const dIso = isoDate(addDays(ws, i));
+
+      // якщо вихідний — пропускаємо (у всіх)
+      if(off && off[dIso]) continue;
+
+      const day = res[dIso] || {};
+
+      // РАХУЄМО ДЛЯ КОЖНОГО працівника, навіть якщо запису в JSON нема (=> office)
+      for(const u of TEAM.filter(isEmployee)){
+        const mode = day?.[u.id] || "office";
 
         if(mode === "remote" || mode === "remote_pending"){
-          stats[uid].remote++;
+          stats[u.id].remote++;
         }else if(mode === "vacation"){
-          stats[uid].vacation++;
+          stats[u.id].vacation++;
+        }else{
+          stats[u.id].office++;
         }
       }
     }
   }
+
   return stats;
 }
 
@@ -3013,6 +3030,7 @@ function renderManagerYtdStats(){
   }
 
   card.style.display = "block";
+  setMgrStatsOpen(getMgrStatsOpen());
 
   if(!ytdStats){
     body.innerHTML = `<div class="muted">Немає даних (або немає доступу до planner_weeks). Натисни “Оновити”.</div>`;
@@ -3022,48 +3040,76 @@ function renderManagerYtdStats(){
   const emps = TEAM.filter(isEmployee);
 
   // totals + max for scaling
-  let totalRemote = 0, totalVacation = 0;
-  let maxRemote = 0, maxVacation = 0;
+let totalRemote = 0, totalOffice = 0, totalVacation = 0;
+let maxRemote = 0, maxOffice = 0, maxVacation = 0;
 
-  for(const u of emps){
-    const s = ytdStats[u.id] || { remote:0, vacation:0 };
-    totalRemote += s.remote;
-    totalVacation += s.vacation;
-    maxRemote = Math.max(maxRemote, s.remote);
-    maxVacation = Math.max(maxVacation, s.vacation);
-  }
+for(const u of emps){
+  const s = ytdStats[u.id] || { remote:0, office:0, vacation:0 };
+  totalRemote += s.remote;
+  totalOffice += s.office;
+  totalVacation += s.vacation;
 
-  const totalRemoteEl = document.getElementById("mgrStatsTotalRemote");
-  const totalVacationEl = document.getElementById("mgrStatsTotalVacation");
-  if(totalRemoteEl) totalRemoteEl.textContent = `Remote: ${totalRemote}`;
-  if(totalVacationEl) totalVacationEl.textContent = `Відпустка: ${totalVacation}`;
+  maxRemote = Math.max(maxRemote, s.remote);
+  maxOffice = Math.max(maxOffice, s.office);
+  maxVacation = Math.max(maxVacation, s.vacation);
+}
+
+const totalRemoteEl = document.getElementById("mgrStatsTotalRemote");
+const totalOfficeEl = document.getElementById("mgrStatsTotalOffice");
+const totalVacationEl = document.getElementById("mgrStatsTotalVacation");
+const totalROEl = document.getElementById("mgrStatsTotalRO");
+
+if(totalRemoteEl) totalRemoteEl.textContent = `Remote: ${totalRemote}`;
+if(totalOfficeEl) totalOfficeEl.textContent = `Office: ${totalOffice}`;
+if(totalVacationEl) totalVacationEl.textContent = `Відпустка: ${totalVacation}`;
+
+// співвідношення remote/office (числове + % remote)
+const denom = totalRemote + totalOffice;
+const pctR = denom ? Math.round((totalRemote / denom) * 100) : 0;
+if(totalROEl) totalROEl.textContent = `R/O: ${totalRemote}/${totalOffice} · ${pctR}%`;
 
   // sort: remote desc, then vacation desc
-  const rows = emps
-    .map(u => ({ u, s: ytdStats[u.id] || { remote:0, vacation:0 } }))
-    .sort((a,b) => (b.s.remote - a.s.remote) || (b.s.vacation - a.s.vacation) || String(a.u.name).localeCompare(String(b.u.name),"uk"));
+const rows = emps
+  .map(u => ({ u, s: ytdStats[u.id] || { remote:0, office:0, vacation:0 } }))
+  .sort((a,b) =>
+    (b.s.remote - a.s.remote) ||
+    (b.s.office - a.s.office) ||
+    (b.s.vacation - a.s.vacation) ||
+    String(a.u.name).localeCompare(String(b.u.name),"uk")
+  );
 
   body.innerHTML = rows.map(({u, s}) => {
-    const rPct = maxRemote ? Math.round((s.remote / maxRemote) * 100) : 0;
-    const vPct = maxVacation ? Math.round((s.vacation / maxVacation) * 100) : 0;
+const rPct = maxRemote ? Math.round((s.remote / maxRemote) * 100) : 0;
+const oPct = maxOffice ? Math.round((s.office / maxOffice) * 100) : 0;
+const vPct = maxVacation ? Math.round((s.vacation / maxVacation) * 100) : 0;
 
-    return `
-      <div class="statRow">
-        <div class="statName" title="${escapeHtml(u.name)}">${escapeHtml(u.name)}</div>
+// remote/office: числове + % remote (без vacation)
+const denom = s.remote + s.office;
+const pctR = denom ? Math.round((s.remote / denom) * 100) : 0;
+const roText = `${s.remote}/${s.office} · ${pctR}%`;
 
-        <div class="statBars">
-          <div class="barTrack" title="Remote: ${s.remote}">
-            <div class="barFill remote" style="width:${rPct}%"></div>
-          </div>
-          <div class="barTrack" title="Відпустка: ${s.vacation}">
-            <div class="barFill vacation" style="width:${vPct}%"></div>
-          </div>
-        </div>
+return `
+  <div class="statRow">
+    <div class="statName" title="${escapeHtml(u.name)}">${escapeHtml(u.name)}</div>
 
-        <div class="statNum">${s.remote}<span>R</span></div>
-        <div class="statNum">${s.vacation}<span>V</span></div>
+    <div class="statBars">
+      <div class="barTrack" title="Remote: ${s.remote}">
+        <div class="barFill remote" style="width:${rPct}%"></div>
       </div>
-    `;
+      <div class="barTrack" title="Office: ${s.office}">
+        <div class="barFill office" style="width:${oPct}%"></div>
+      </div>
+      <div class="barTrack" title="Відпустка: ${s.vacation}">
+        <div class="barFill vacation" style="width:${vPct}%"></div>
+      </div>
+    </div>
+
+    <div class="statNum">${s.remote}<span>R</span></div>
+    <div class="statNum">${s.office}<span>O</span></div>
+    <div class="statNum">${s.vacation}<span>V</span></div>
+    <div class="statNum" title="Remote/Office: ${s.remote}/${s.office} (${pctR}%)">${roText}</div>
+  </div>
+`;
   }).join("");
 }
 /** =============================
@@ -3430,6 +3476,36 @@ queueYtdStatsRefresh();
     });
 }
 
+  // === Manager stats collapse toggle ===
+const LS_MGR_STATS_OPEN = "rp_mgrStatsOpen";
+
+function setMgrStatsOpen(open){
+  const content = document.getElementById("mgrStatsContent");
+  const btn = document.getElementById("btnMgrStatsToggle");
+  if(content) content.style.display = open ? "block" : "none";
+  if(btn) btn.textContent = open ? "Згорнути" : "Розгорнути";
+  localStorage.setItem(LS_MGR_STATS_OPEN, open ? "1" : "0");
+}
+
+function getMgrStatsOpen(){
+  // дефолт: згорнуто
+  return localStorage.getItem(LS_MGR_STATS_OPEN) === "1";
+}
+
+// навішуємо один раз (кнопка є в DOM з початку)
+(function initMgrStatsToggle(){
+  const btn = document.getElementById("btnMgrStatsToggle");
+  if(!btn) return;
+
+  // стартовий стан
+  setMgrStatsOpen(getMgrStatsOpen());
+
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const open = !getMgrStatsOpen();
+    setMgrStatsOpen(open);
+  });
+})();
 
 /** =============================
  * 6) Auth init (single entry point)
