@@ -885,31 +885,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   font-weight: 700;
 }
 
-  /* Secondary action button (employee) */
-#btnAddRemoteOutlook{
-  background: #fff;
-  border: 1px solid rgba(37,99,235,.25);
-  color: #1D4ED8;
-  font-weight: 700;
-}
-
-#btnAddRemoteOutlook:hover{
-  background: rgba(37,99,235,.06);
-  border-color: rgba(37,99,235,.35);
-}
-
-#btnAddRemoteOutlook:disabled{
-  opacity: .45;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-  background: rgba(2,6,23,.02);
-  border-color: rgba(229,231,235,.95);
-  color: #64748B;
-}
-
-
-  
 </style>
 </head>
 
@@ -965,15 +940,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
 
 <span class="badge onlyEmployee">Мої токени:</span>
 <span id="myTokens" class="pill onlyEmployee"></span>
-<button id="btnOutlookRemoteThis" class="onlyEmployee" type="button" disabled>
-  📅 Remote → Outlook (Цей тиждень)
-</button>
-
-<button id="btnOutlookRemoteNext" class="onlyEmployee" type="button" disabled>
-  📅 Remote → Outlook (Наступний тиждень)
-</button>
-      <span class="right"></span>
-
 <button id="btnReset" class="bad" style="display:none">Скинути все (local)</button>
       <span id="mgrControls" class="row" style="gap:8px;"></span>
       <!-- Manager: YTD stats -->
@@ -1003,13 +969,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     <!-- тільки для працівника -->
     <button id="btnToggleFilled" class="primary onlyEmployee" type="button">Я заповнив</button>
   </div>
-<button id="btnAddRemoteOutlook"
-        class="onlyEmployee"
-        type="button"
-        disabled
-        title="Стане доступно після approve керівником">
-  📅 Додати Remote в Outlook
-</button>
 
   <div style="height:12px"></div>
 
@@ -2071,7 +2030,6 @@ tabNext.onclick = () => setTab("next");
 tabThis.onclick = () => setTab("this");
 setTab("next");
 
-
 const btnReset = document.getElementById("btnReset");
 if(btnReset){
   btnReset.style.display = "none"; // ховаємо для всіх
@@ -2082,32 +2040,6 @@ const btnToggleFilled = document.getElementById("btnToggleFilled");
 if(btnToggleFilled){
   btnToggleFilled.addEventListener("click", toggleMySubmission);
 }
-const btnOutlookRemoteThis = document.getElementById("btnOutlookRemoteThis");
-if(btnOutlookRemoteThis){
-  btnOutlookRemoteThis.addEventListener("click", () => downloadMyRemoteIcsForWeek(thisWeekStart, "this"));
-}
-
-const btnOutlookRemoteNext = document.getElementById("btnOutlookRemoteNext");
-if(btnOutlookRemoteNext){
-  btnOutlookRemoteNext.addEventListener("click", () => downloadMyRemoteIcsForWeek(nextWeekStart, "next"));
-}
-
-
-  
-const btnICS = document.getElementById("btnICS");
-if(btnICS){
-  btnICS.onclick = () => {
-    // (залишено на випадок якщо колись повернеш кнопку)
-    const me = currentUser();
-    if(me.role === "manager"){
-      alert("Експорт .ics доступний лише для працівників.");
-      return;
-    }
-    const ics = buildICSForUser(me.id);
-    downloadText(`remote_${me.name}_${thisWeekStart}.ics`, ics, "text/calendar");
-  };
-}
-
 
 /** =============================
  * 5) Counters
@@ -2137,43 +2069,6 @@ function hasPendingInDay(weekStartIso, dateIso){
 function currentUser(){
   const uid = currentSession?.user?.id || meSel?.value;
   return TEAM.find(u => u.id === uid);
-}
-function renderOutlookRemoteButtons(){
-  const btnThis = document.getElementById("btnOutlookRemoteThis");
-  const btnNext = document.getElementById("btnOutlookRemoteNext");
-  const btnLegacy = document.getElementById("btnAddRemoteOutlook"); // якщо залишаєш стару кнопку
-
-  // дефолт: усе вимкнено
-  if(btnThis) btnThis.disabled = true;
-  if(btnNext) btnNext.disabled = true;
-  if(btnLegacy) btnLegacy.disabled = true;
-
-  // ще не готово
-  if(!isLoggedIn() || !state || !thisWeekStart || !nextWeekStart) return;
-
-  const me = currentUser();
-  if(!me || me.role === "manager") return;
-
-  const wThis = getWeek(thisWeekStart);
-  const wNext = getWeek(nextWeekStart);
-
-  const okThis = (wThis.status === "approved" || wThis.status === "locked");
-  const okNext = (wNext.status === "approved" || wNext.status === "locked");
-
-  if(btnThis){
-    btnThis.disabled = !okThis;
-    btnThis.title = okThis ? "Завантажити ICS для Remote-днів (цей тиждень)" : "Доступно після Approve";
-  }
-  if(btnNext){
-    btnNext.disabled = !okNext;
-    btnNext.title = okNext ? "Завантажити ICS для Remote-днів (наступний тиждень)" : "Доступно після Approve";
-  }
-
-  // Якщо стару кнопку лишаєш — логічно прирівняти її до NEXT week
-  if(btnLegacy){
-    btnLegacy.disabled = !okNext;
-    btnLegacy.title = okNext ? "Згенерувати ICS для Remote-днів (approved next week)" : "Стане доступно після approve";
-  }
 }
 
 function winRate(uid){
@@ -2439,7 +2334,6 @@ if(me.role === "manager"){
 
 notifyOverridesForMe(nextWeekStart);
   renderFillBar();  
-renderOutlookRemoteButtons();
 }
 
 function renderManagerControls(){
@@ -2900,207 +2794,6 @@ saveState();
 return;
 }
 
-  
-/** =============================
- * 9) ICS export (all-day)
- * ============================= */
-/** =============================
- * 9) ICS export (personal: Remote only, WorkingElsewhere, all-day)
- *  - exports THIS week always
- *  - exports NEXT week only if it is approved
- * ============================= */
-function buildICSForUser(userId){
-  const user = TEAM.find(u=>u.id===userId);
-  if(!user) return "";
-
-  const weeksToExport = [thisWeekStart];
-  const nextW = getWeek(nextWeekStart);
-  if(nextW && (nextW.status === "approved" || nextW.status === "locked")){
-    weeksToExport.push(nextWeekStart);
-  }
-
-  const lines = [];
-  lines.push("BEGIN:VCALENDAR");
-  lines.push("VERSION:2.0");
-  lines.push("PRODID:-//Remote Planner//UA//EN");
-  lines.push("CALSCALE:GREGORIAN");
-  lines.push("METHOD:PUBLISH");
-
-  const dtStamp = toIcsDateTime(new Date());
-
-  for(const weekStartIso of weeksToExport){
-    const w = getWeek(weekStartIso);
-    const ws = new Date(weekStartIso);
-
-    for(let i=0;i<5;i++){
-      const date = addDays(ws, i);
-      const dIso = isoDate(date);
-
-      // не ставимо "remote" на day-off
-      if(isDayOff(weekStartIso, dIso)) continue;
-
-      const day = w.reservations?.[dIso] || {};
-      const mode = day[userId];
-
-      // тільки Remote (не office, не vacation, не pending)
-      if(mode !== "remote") continue;
-
-      const summary = "Працюю віддалено";
-      const dtStart = toIcsDate(date);
-      const dtEnd = toIcsDate(addDays(date, 1));
-      const uidStr = `remote-${weekStartIso}-${dIso}-${userId}@remote-planner`;
-
-      lines.push("BEGIN:VEVENT");
-      lines.push(`UID:${uidStr}`);
-      lines.push(`DTSTAMP:${dtStamp}`);
-      lines.push(`SUMMARY:${escapeICS(summary)}`);
-      lines.push(`DTSTART;VALUE=DATE:${dtStart}`);
-      lines.push(`DTEND;VALUE=DATE:${dtEnd}`);
-
-      // Outlook / Microsoft fields
-      lines.push("TRANSP:OPAQUE");
-      lines.push("X-MICROSOFT-CDO-ALLDAYEVENT:TRUE");
-      lines.push("X-MICROSOFT-CDO-BUSYSTATUS:WORKINGELSEWHERE");
-
-      // reminder 8 hours before (relative)
-      lines.push("BEGIN:VALARM");
-      lines.push("TRIGGER:-PT8H");
-      lines.push("ACTION:DISPLAY");
-      lines.push(`DESCRIPTION:${escapeICS(summary)}`);
-      lines.push("END:VALARM");
-
-      lines.push("END:VEVENT");
-    }
-  }
-
-  lines.push("END:VCALENDAR");
-  return lines.join("\r\n");
-}
-
-function toIcsDate(d){
-  const x = new Date(d); x.setHours(0,0,0,0);
-  const yyyy = x.getFullYear();
-  const mm = String(x.getMonth()+1).padStart(2,"0");
-  const dd = String(x.getDate()).padStart(2,"0");
-  return `${yyyy}${mm}${dd}`;
-}
-function toIcsDateTime(d){
-  const x = new Date(d);
-  const yyyy = x.getUTCFullYear();
-  const mm = String(x.getUTCMonth()+1).padStart(2,"0");
-  const dd = String(x.getUTCDate()).padStart(2,"0");
-  const hh = String(x.getUTCHours()).padStart(2,"0");
-  const mi = String(x.getUTCMinutes()).padStart(2,"0");
-  const ss = String(x.getUTCSeconds()).padStart(2,"0");
-  return `${yyyy}${mm}${dd}T${hh}${mi}${ss}Z`;
-}
-function escapeICS(s){
-  return String(s)
-    .replaceAll("\\","\\\\")
-    .replaceAll("\n","\\n")
-    .replaceAll(",","\\,")
-    .replaceAll(";","\\;");
-}
-
-function safeFilename(s){
-  return String(s || "user")
-    .replace(/[\\/:*?"<>|]+/g, "_")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// ICS тільки для nextWeekStart, і тільки коли тиждень approved/locked
-function buildICSForUserWeek(userId, weekStartIso){
-  const user = TEAM.find(u=>u.id===userId);
-  if(!user) return "";
-
-  const w = getWeek(weekStartIso);
-  if(!(w.status === "approved" || w.status === "locked")) return "";
-
-  const ws = new Date(weekStartIso);
-
-  const lines = [];
-  lines.push("BEGIN:VCALENDAR");
-  lines.push("VERSION:2.0");
-  lines.push("PRODID:-//Remote Planner//UA//EN");
-  lines.push("CALSCALE:GREGORIAN");
-  lines.push("METHOD:PUBLISH");
-
-  const dtStamp = toIcsDateTime(new Date());
-  const summary = "Працюю віддалено";
-
-  let any = false;
-
-  for(let i=0;i<5;i++){
-    const date = addDays(ws, i);
-    const dIso = isoDate(date);
-
-    // не ставимо подію на day-off
-    if(isDayOff(weekStartIso, dIso)) continue;
-
-    const day = w.reservations?.[dIso] || {};
-    const mode = day[userId];
-
-    // тільки remote (НЕ pending, НЕ office, НЕ vacation)
-    if(mode !== "remote") continue;
-
-    any = true;
-
-    const dtStart = toIcsDate(date);
-    const dtEnd = toIcsDate(addDays(date, 1));
-    const uidStr = `remote-${weekStartIso}-${dIso}-${userId}@remote-planner`;
-
-    lines.push("BEGIN:VEVENT");
-    lines.push(`UID:${uidStr}`);
-    lines.push(`DTSTAMP:${dtStamp}`);
-    lines.push(`SUMMARY:${escapeICS(summary)}`);
-    lines.push(`DTSTART;VALUE=DATE:${dtStart}`);
-    lines.push(`DTEND;VALUE=DATE:${dtEnd}`);
-
-    // Outlook / Microsoft fields ("Відобразити як" -> Working elsewhere)
-    lines.push("TRANSP:OPAQUE");
-    lines.push("X-MICROSOFT-CDO-ALLDAYEVENT:TRUE");
-    lines.push("X-MICROSOFT-CDO-BUSYSTATUS:WORKINGELSEWHERE");
-
-    // reminder 8 hours before
-    lines.push("BEGIN:VALARM");
-    lines.push("TRIGGER:-PT8H");
-    lines.push("ACTION:DISPLAY");
-    lines.push(`DESCRIPTION:${escapeICS(summary)}`);
-    lines.push("END:VALARM");
-
-    lines.push("END:VEVENT");
-  }
-
-  lines.push("END:VCALENDAR");
-
-  return any ? lines.join("\r\n") : "";
-}
-
-function downloadMyRemoteIcsForApprovedWeek(){
-  const me = currentUser();
-  if(!me || me.role === "manager"){
-    alert("Ця кнопка лише для працівників.");
-    return;
-  }
-
-  const w = getWeek(nextWeekStart);
-  if(!(w.status === "approved" || w.status === "locked")){
-    alert("Тиждень ще не затверджено. Доступно лише після Approve.");
-    return;
-  }
-
-  const ics = buildICSForUserWeek(me.id, nextWeekStart);
-  if(!ics){
-    alert("У тебе немає Remote-днів у затвердженому тижні.");
-    return;
-  }
-
-  const fname = `remote_${safeFilename(me.name)}_${nextWeekStart}.ics`;
-  downloadText(fname, ics, "text/calendar");
-}
-
-  
   function escapeHtml(s){
   return String(s)
     .replaceAll("&","&amp;")
@@ -3120,12 +2813,6 @@ function downloadText(filename, text, mime){
   a.remove();
   URL.revokeObjectURL(url);
 }
-function downloadMyRemoteIcsForWeek(weekStartIso, which){
-  const me = currentUser();
-  if(!me || me.role === "manager"){
-    alert("Ця кнопка лише для працівників.");
-    return;
-  }
 
   const w = getWeek(weekStartIso);
   if(!(w.status === "approved" || w.status === "locked")){
@@ -3317,82 +3004,6 @@ return `
   }).join("");
 }
 
-  function pad2(n){ return String(n).padStart(2,"0"); }
-
-function toIcsDate(d){
-  // YYYYMMDD
-  return `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}`;
-}
-
-function toIcsDateTimeUTC(d){
-  // YYYYMMDDTHHMMSSZ
-  return `${d.getUTCFullYear()}${pad2(d.getUTCMonth()+1)}${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`;
-}
-
-function icsEscape(s){
-  return String(s || "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/;/g, "\\;")
-    .replace(/,/g, "\\,");
-}
-
-/**
- * Будує ICS для одного користувача на один тиждень:
- * - all-day події лише на ті дні, де у userId режим "remote"
- * - SUMMARY: "Працюю віддалено"
- * - Show as: "Working Elsewhere" через X-MICROSOFT-CDO-BUSYSTATUS
- */
-function buildRemoteIcsForUserWeek(weekStartIso, userId){
-  const w = getWeek(weekStartIso);
-  const ws = new Date(weekStartIso);
-
-  const remoteDates = [];
-  for(let i=0;i<5;i++){
-    const d = addDays(ws, i);
-    const dIso = isoDate(d);
-    const mode = (w.reservations?.[dIso]?.[userId]) || "office";
-    if(mode === "remote"){ remoteDates.push(d); }
-  }
-
-  if(remoteDates.length === 0) return null;
-
-  const dtstamp = toIcsDateTimeUTC(new Date());
-  const lines = [];
-  lines.push("BEGIN:VCALENDAR");
-  lines.push("VERSION:2.0");
-  lines.push("PRODID:-//Remote Planner//UA//EN");
-  lines.push("CALSCALE:GREGORIAN");
-  lines.push("METHOD:PUBLISH");
-
-  for(const d of remoteDates){
-    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-    const end   = addDays(start, 1); // DTEND у all-day подіях задається як наступний день (не включно) 
-
-    const uid = `remote-${userId}-${toIcsDate(start)}@remote-planner`;
-
-    lines.push("BEGIN:VEVENT");
-    lines.push(`UID:${uid}`);
-    lines.push(`DTSTAMP:${dtstamp}`);
-    lines.push(`DTSTART;VALUE=DATE:${toIcsDate(start)}`);
-    lines.push(`DTEND;VALUE=DATE:${toIcsDate(end)}`);
-    lines.push(`SUMMARY:${icsEscape("Працюю віддалено")}`);
-    lines.push("STATUS:CONFIRMED");
-    lines.push("TRANSP:OPAQUE");
-
-    // Outlook "Show As" = Working Elsewhere
-    // (Outlook розуміє це через X-MICROSOFT-CDO-BUSYSTATUS) :contentReference[oaicite:1]{index=1}
-    lines.push("X-MICROSOFT-CDO-ALLDAYEVENT:TRUE");
-    lines.push("X-MICROSOFT-CDO-BUSYSTATUS:WORKINGELSEWHERE");
-
-    lines.push("END:VEVENT");
-  }
-
-  lines.push("END:VCALENDAR");
-  return lines.join("\r\n");
-}
-
-
 /** =============================
  * 10) SUMMARY EMAIL (EML) — for manager approve
  * ============================= */
@@ -3561,21 +3172,6 @@ function buildSummaryHtmlTable_NoIcons(weekStartIso){
     </div>
   `;
 }
-function downloadMyRemoteOutlookIcs(){
-  const uid = currentSession?.user?.id;
-  if(!uid) return alert("Спочатку потрібно увійти.");
-
-  const w = getWeek(nextWeekStart);
-  if(w.status !== "approved"){
-    return alert("Кнопка активується лише після approve керівником.");
-  }
-
-  const ics = buildRemoteIcsForUserWeek(nextWeekStart, uid);
-  if(!ics) return alert("У цьому approved-тижні у вас немає Remote-днів.");
-
-  downloadText(`remote_${nextWeekStart}.ics`, ics, "text/calendar;charset=utf-8");
-}
-
   
 function autoDownloadSummaryEml(weekStartIso){
   const w = getWeek(weekStartIso);
