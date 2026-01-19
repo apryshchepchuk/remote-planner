@@ -885,6 +885,72 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   font-weight: 700;
 }
 
+/* === Toast (local, no-AI) === */
+.toastHost{
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast{
+  pointer-events: auto;
+  width: min(760px, calc(100vw - 28px));
+  background: #fff;
+  border: 1px solid rgba(229,231,235,.95);
+  border-radius: 16px;
+  box-shadow: 0 14px 34px rgba(15,23,42,.18);
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  animation: toastIn 180ms ease both;
+}
+
+.toast .tIcon{
+  font-size: 18px;
+  line-height: 1;
+  margin-top: 2px;
+}
+.toast .tBody{ flex: 1 1 auto; min-width: 0; }
+.toast .tTitle{
+  font-weight: 850;
+  font-size: 13px;
+  margin: 0 0 3px;
+}
+.toast .tMsg{
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  margin: 0;
+}
+.toast .tClose{
+  all: unset;
+  cursor: pointer;
+  font-size: 16px;
+  opacity: .55;
+  padding: 2px 4px;
+}
+.toast .tClose:hover{ opacity: 1; }
+
+.toast.remote{ border-color: rgba(34,211,238,.45); }
+.toast.vacation{ border-color: rgba(37,99,235,.35); }
+
+@keyframes toastIn{
+  from { transform: translateY(10px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+@keyframes toastOut{
+  from { transform: translateY(0); opacity: 1; }
+  to   { transform: translateY(10px); opacity: 0; }
+}
+
+  
 </style>
 </head>
 
@@ -1004,6 +1070,8 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
     <div class="muted small">Токени оновлюються щомісяця (1 на людину). Fairness roll підсилює того, хто частіше програвав конфлікти.</div>
   </div>
 </div>
+    <!-- Toast host -->
+<div id="toastHost" class="toastHost" aria-live="polite" aria-atomic="true"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
 <script>
@@ -2694,6 +2762,7 @@ if(w.status === "approved") return alert("Тиждень уже затвердж
   if(desiredMode === "vacation"){
     day[me.id] = "vacation";
     saveState();
+    toastForModeChange({ mode: "vacation", dateIso });
     return;
   }
 
@@ -2783,6 +2852,7 @@ meta.ts[me.id] = Date.now();
   duel.total = (duel.total || 0) + 1;
 
   saveState();
+  toastForModeChange({ mode: day[me.id], dateIso });
   return;
 }
 
@@ -2791,6 +2861,7 @@ day[me.id] = setRemoteWithLimit(me.id);
 const meta = getDayMeta(weekStartIso, dateIso);
 meta.ts[me.id] = Date.now();
 saveState();
+toastForModeChange({ mode: day[me.id], dateIso });
 return;
 }
 
@@ -2815,6 +2886,90 @@ function downloadText(filename, text, mime){
   URL.revokeObjectURL(url);
 }
 
+/* === Local toast (no-AI) === */
+const TOAST_JOKES = {
+  remote: [
+    "Remote: головне — не переплутати Zoom із YouTube 😄",
+    "Remote режим активовано. Кава-брейк має право на існування ☕",
+    "Працюю віддалено: офіс сьогодні у мене вдома 🏠",
+    "Remote day: продуктивність зростає пропорційно тиші 🤫"
+  ],
+  vacation: [
+    "Відпустка: статус “на зв’язку” тимчасово недоступний 🏖️",
+    "Відпустка — це коли календар каже “дякую” 🙌",
+    "Режим відпочинку увімкнено. Робота хай почекає 😌",
+    "Відпустка: перезавантаження системи… ✅"
+  ]
+};
+
+function _pick(arr){
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function _fmtDay(dateIso){
+  const d = new Date(String(dateIso) + "T00:00:00");
+  return d.toLocaleDateString("uk-UA", { weekday:"short", day:"2-digit", month:"2-digit" });
+}
+
+function showToast({ type="remote", title="", message="", timeout=5200 }){
+  const host = document.getElementById("toastHost");
+  if(!host) return;
+
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+
+  const icon = (type === "vacation") ? "🏖️" : "🏠";
+
+  el.innerHTML = `
+    <div class="tIcon">${icon}</div>
+    <div class="tBody">
+      <div class="tTitle">${escapeHtml(title)}</div>
+      <p class="tMsg">${escapeHtml(message)}</p>
+    </div>
+    <button class="tClose" type="button" title="Закрити">✕</button>
+  `;
+
+  const close = () => {
+    el.style.animation = "toastOut 160ms ease both";
+    setTimeout(() => el.remove(), 170);
+  };
+
+  el.querySelector(".tClose")?.addEventListener("click", close);
+
+  host.appendChild(el);
+
+  if(timeout){
+    setTimeout(close, timeout);
+  }
+}
+
+function toastForModeChange({ mode, dateIso }){
+  const me = currentUser();
+  if(!me || me.role === "manager") return; // тільки для працівників
+
+  if(mode !== "remote" && mode !== "remote_pending" && mode !== "vacation") return;
+
+  const dayLabel = _fmtDay(dateIso);
+
+  if(mode === "vacation"){
+    showToast({
+      type: "vacation",
+      title: `Відпустка: ${dayLabel}`,
+      message: _pick(TOAST_JOKES.vacation)
+    });
+    return;
+  }
+
+  // remote / remote_pending
+  const pendingNote = (mode === "remote_pending") ? " (OK?)" : "";
+  showToast({
+    type: "remote",
+    title: `Remote${pendingNote}: ${dayLabel}`,
+    message: _pick(TOAST_JOKES.remote)
+  });
+}
+
+  
 /** =============================
  * 5.8) Manager YTD stats (Remote/Vacation)
  * ============================= */
