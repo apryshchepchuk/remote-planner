@@ -373,6 +373,10 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   font-weight: 800;
 }
   
+ .bdayPill{
+  white-space: nowrap;
+  padding: 2px 8px;
+} 
 /* Personal warnings / small callouts */
 .pill.my-remote.warn{
   background: rgba(180,83,9,.10);
@@ -2597,9 +2601,10 @@ dayBox.innerHTML = `
         <b>${dow}</b>
         ${dayOff ? `<span class="pill" style="padding:2px 8px;">🎉 Вихідний</span>` : ``}
         ${(bdays && bdays.length) ? `
+  ${(bdays && bdays.length) ? `
   <span class="pill bdayPill" style="padding:2px 8px;"
         title="День народження: ${escapeHtml(bdays.join(", "))}">
-    🎂 ДН: ${escapeHtml(bdays[0])}${bdays.length > 1 ? ` +${bdays.length-1}` : ``}
+    🎂 ДН
   </span>` : ``}
       </div>
 
