@@ -359,6 +359,20 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   box-shadow: 0 0 0 4px rgba(15,118,110,.10), var(--shadow-md);
 }
 
+/* === Birthday highlight === */
+.day.birthday{
+  border: 2px solid rgba(245,158,11,.75);
+  box-shadow: 0 0 0 4px rgba(245,158,11,.10), var(--shadow-sm);
+  background: linear-gradient(180deg, #FFFFFF 0%, rgba(245,158,11,.08) 100%);
+}
+
+.bdayPill{
+  background: rgba(245,158,11,.12) !important;
+  border-color: rgba(245,158,11,.35) !important;
+  color: #92400e !important;
+  font-weight: 800;
+}
+  
 /* Personal warnings / small callouts */
 .pill.my-remote.warn{
   background: rgba(180,83,9,.10);
@@ -1658,12 +1672,32 @@ async function loadMyProfile(){
 // =============================
 let PROFILES = [];
 let PROFILE_BY_ID = {};
+  
+// === Birthdays (MM-DD) ===
+let BIRTHDAY_MMDD_BY_ID = {}; // { [userId]: "MM-DD" }
 
+function buildBirthdaysFromProfiles(){
+  BIRTHDAY_MMDD_BY_ID = {};
+  (PROFILES || []).forEach(p => {
+    if(p?.id && p?.birth_mmdd) BIRTHDAY_MMDD_BY_ID[p.id] = String(p.birth_mmdd).trim();
+  });
+}
+
+function birthdaysOnDate(dateIso){
+  // dateIso: "YYYY-MM-DD" -> "MM-DD"
+  const md = String(dateIso).slice(5);
+  const names = TEAM
+    .filter(isEmployee)
+    .filter(u => (BIRTHDAY_MMDD_BY_ID[u.id] || "") === md)
+    .map(u => u.name);
+  return names;
+}
+  
 async function refreshProfilesCache(){
   // не блокуємо роботу застосунку, якщо profiles недоступні
   const { data, error } = await sb
     .from("profiles")
-    .select("id,email,full_name,role");
+    .select("id,email,full_name,role,birth_mmdd");
 
   if(error){
     console.warn("refreshProfilesCache error:", error);
@@ -2551,6 +2585,8 @@ const meUser = currentUser();
 const isMgr = meUser.role === "manager";
 const dayOff = isDayOff(weekStartIso, dIso);
 if(dayOff) dayBox.classList.add("dayoff");
+const bdays = birthdaysOnDate(dIso);
+if(bdays.length) dayBox.classList.add("birthday");
 
 dayBox.innerHTML = `
   <div class="topline">
@@ -2560,6 +2596,11 @@ dayBox.innerHTML = `
       <div class="remoteLabel">
         <b>${dow}</b>
         ${dayOff ? `<span class="pill" style="padding:2px 8px;">🎉 Вихідний</span>` : ``}
+        ${(bdays && bdays.length) ? `
+  <span class="pill bdayPill" style="padding:2px 8px;"
+        title="День народження: ${escapeHtml(bdays.join(", "))}">
+    🎂 ДН: ${escapeHtml(bdays[0])}${bdays.length > 1 ? ` +${bdays.length-1}` : ``}
+  </span>` : ``}
       </div>
 
 ${(!isCurrentWeek && isMgr) ? `
@@ -3555,6 +3596,7 @@ async function initAfterLogin(){
   // 1) profiles -> TEAM
   await refreshProfilesCache();
   buildTeamFromProfiles();
+  buildBirthdaysFromProfiles();
 
   // 2) UI for "me" (hidden selector + label)
   initRosterUI();
