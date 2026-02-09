@@ -2455,14 +2455,50 @@ function renderManagerControls(){
   const w = getWeek(nextWeekStart);
   const isApproved = (w.status === "approved");
 
-  host.innerHTML = `
-    <button id="mgrApprove" class="ok" ${isApproved ? "disabled" : ""}>Approve week</button>
-    <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"} title="Повернути в draft">Unapprove</button>
-  `;
+host.innerHTML = `
+  <button id="mgrApprove" class="ok" ${isApproved ? "disabled" : ""}>Approve week</button>
+  <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"} title="Повернути в draft">Unapprove</button>
+
+  <button id="mgrEmailBlast" type="button" title="Згенерувати EML для desktop Outlook">
+    📧 Згенерувати розсилку (EML)
+  </button>
+`;
 
   const btnApprove = document.getElementById("mgrApprove");
   const btnUnapprove = document.getElementById("mgrUnapprove");
+  const btnEmail = document.getElementById("mgrEmailBlast");
 
+  // Вибір тижня для розсилки:
+  // - якщо nextWeek approved -> шлемо його
+  // - інакше, якщо thisWeek approved -> шлемо thisWeek
+  // - інакше кнопка disabled (нема жодного approved)
+  const wNext = getWeek(nextWeekStart);
+  const wThis = getWeek(thisWeekStart);
+
+  const targetWeekStart =
+    (wNext?.status === "approved") ? nextWeekStart :
+    (wThis?.status === "approved") ? thisWeekStart :
+    null;
+
+  if(btnEmail){
+    btnEmail.disabled = !targetWeekStart;
+    btnEmail.title = targetWeekStart
+      ? `Згенерувати EML для тижня ${targetWeekStart} (approved)`
+      : "Немає погодженого тижня (approved) — EML недоступний.";
+
+    btnEmail.onclick = () => {
+      if(!targetWeekStart){
+        alert("Немає погодженого тижня (approved). Спочатку Approve next week або відкрий approved this week.");
+        return;
+      }
+      try{
+        autoDownloadSummaryEml(targetWeekStart);
+      }catch(e){
+        console.error("autoDownloadSummaryEml failed:", e);
+        alert("Не вдалося згенерувати EML. Дивись Console.");
+      }
+    };
+  }
   if(btnApprove){
     btnApprove.onclick = async () => {
       if(w.status !== "draft"){
