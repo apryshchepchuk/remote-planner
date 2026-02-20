@@ -1548,68 +1548,7 @@ function forceClearSupabaseAuth(){
 document.getElementById("btnLogin").addEventListener("click", async (e) => {
   e.preventDefault();
 
- document.getElementById("btnImportLD")?.addEventListener("click", () => {
-  document.getElementById("fileImportLD")?.click();
-});
 
-document.getElementById("fileImportLD")?.addEventListener("change", async (e) => {
-  try{
-    const f = e.target.files?.[0];
-    if(!f) return;
-    const txt = await f.text();
-    const json = JSON.parse(txt);
-
-    const hearings = Array.isArray(json) ? json : (json.hearings || []);
-    if(!Array.isArray(hearings)) throw new Error("Невірний формат JSON (очікую масив або {hearings:[...]})");
-
-buildLastNameIndexFromProfiles();
-
-    const unmatched = [];
-    const touchedWeeks = new Set();
-
-    for(const h of hearings){
-      const dateIso = h.date;
-      if(!dateIso) continue;
-
-      const ln = String(h.responsible_last_name || "").trim().toLowerCase();
-      const uid = LASTNAME_TO_ID[ln];
-      if(!uid){
-        unmatched.push({ date: dateIso, who: h.responsible_last_name, caseNumber: h.caseNumber });
-        continue;
-      }
-
-      const ws = weekStartFromDateIso(dateIso);
-      touchedWeeks.add(ws);
-
-      addHearingToWeekMeta(ws, dateIso, uid, {
-        time: h.time || "",
-        court: h.court || "",
-        caseNumber: h.caseNumber || ""
-      });
-    }
-
-    // зберігаємо всі зачеплені тижні
-    for(const ws of touchedWeeks){
-      await saveWeekToDB(ws);
-    }
-
-render();
-
-    if(unmatched.length){
-      alert("Імпорт виконано, але є незнайдені прізвища в profiles.last_name:\n\n" +
-        unmatched.slice(0,10).map(x=>`${x.date}: ${x.who || "??"} (${x.caseNumber || ""})`).join("\n") +
-        (unmatched.length>10 ? `\n...і ще ${unmatched.length-10}` : "")
-      );
-    } else {
-showToast({ type:"remote", title:"✅ Імпорт LD", message:"Засідання імпортовано" });
-    }
-  }catch(err){
-    console.error(err);
-    alert("Помилка імпорту LD: " + (err?.message || err));
-  }finally{
-    e.target.value = ""; // щоб можна було імпортувати той самий файл повторно
-  }
-}); 
 
   const email = document.getElementById("loginEmail").value.trim();
   const password = document.getElementById("loginPass").value;
@@ -2049,7 +1988,67 @@ function queueSaveNextWeekToDB(){
     saveNextWeekToDB();
   }, 400); // 300–500 мс оптимально
 }
+  
+async function handleImportLDFile(e){
+  try{
+    const file = e.target.files?.[0];
+    if(!file) return;
 
+    const text = await file.text();
+    const data = JSON.parse(text);
+
+    const hearings = Array.isArray(json) ? json : (json.hearings || []);
+    if(!Array.isArray(hearings)) throw new Error("Невірний формат JSON (очікую масив або {hearings:[...]})");
+
+buildLastNameIndexFromProfiles();
+
+    const unmatched = [];
+    const touchedWeeks = new Set();
+
+    for(const h of hearings){
+      const dateIso = h.date;
+      if(!dateIso) continue;
+
+      const ln = String(h.responsible_last_name || "").trim().toLowerCase();
+      const uid = LASTNAME_TO_ID[ln];
+      if(!uid){
+        unmatched.push({ date: dateIso, who: h.responsible_last_name, caseNumber: h.caseNumber });
+        continue;
+      }
+
+      const ws = weekStartFromDateIso(dateIso);
+      touchedWeeks.add(ws);
+
+      addHearingToWeekMeta(ws, dateIso, uid, {
+        time: h.time || "",
+        court: h.court || "",
+        caseNumber: h.caseNumber || ""
+      });
+    }
+
+    // зберігаємо всі зачеплені тижні
+    for(const ws of touchedWeeks){
+      await saveWeekToDB(ws);
+    }
+
+render();
+
+    if(unmatched.length){
+      alert("Імпорт виконано, але є незнайдені прізвища в profiles.last_name:\n\n" +
+        unmatched.slice(0,10).map(x=>`${x.date}: ${x.who || "??"} (${x.caseNumber || ""})`).join("\n") +
+        (unmatched.length>10 ? `\n...і ще ${unmatched.length-10}` : "")
+      );
+    } else {
+showToast({ type:"remote", title:"✅ Імпорт LD", message:"Засідання імпортовано" });
+    }
+  
+  }catch(err){
+    console.error(err);
+    alert("Помилка імпорту LD: " + (err?.message || err));
+  }finally{
+    e.target.value = ""; // щоб можна було імпортувати той самий файл повторно
+  }
+}
 
 /** =============================
  * 2) State model
@@ -2605,6 +2604,14 @@ host.innerHTML = `
 </button>
 `;
 
+  const btnImport = host.querySelector("#btnImportLD");
+  const fileInput = host.querySelector("#fileImportLD");
+
+  if(btnImport && fileInput){
+    btnImport.onclick = () => fileInput.click();
+    fileInput.onchange = handleImportLDFile;
+  }
+  
   const btnApprove = document.getElementById("mgrApprove");
   const btnUnapprove = document.getElementById("mgrUnapprove");
   const btnEmail = document.getElementById("mgrEmailBlast");
