@@ -2760,6 +2760,7 @@ async function saveWeekToDB(weekStartIso){
   const container = document.getElementById(containerId);
   const w = getWeek(weekStartIso);
   const me = currentUser();
+  const isMgr = (me?.role === "manager");
 
 const editable =
   isLoggedIn() &&
@@ -2787,6 +2788,8 @@ container.innerHTML = `
     dayBox.className = "day";
 
     const day = w.reservations?.[dIso] || {};
+    const dayOff = isDayOff(weekStartIso, dIso);
+    const bdays = birthdaysOnDate(dIso);
     const remoteCount = Object.values(day).filter(v => v === "remote" || v === "remote_pending").length;
 
     if(remoteCount >= LIMIT_REMOTE_PER_DAY) dayBox.classList.add("remote-full");
@@ -3262,12 +3265,10 @@ function computeYtdStats(rows){
     for(let i=0;i<5;i++){
       const dIso = isoDate(addDays(ws, i));
 
-      // якщо вихідний — пропускаємо (у всіх)
       if(off && off[dIso]) continue;
 
       const day = res[dIso] || {};
 
-      // РАХУЄМО ДЛЯ КОЖНОГО працівника, навіть якщо запису в JSON нема (=> office)
       for(const u of TEAM.filter(isEmployee)){
         const mode = day?.[u.id] || "office";
 
