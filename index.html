@@ -2736,14 +2736,38 @@ function weekStartFromDateIso(dateIso){
   return isoDate(d);
 }
 
+function _normH(s){
+  return String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function _hearingKey(dateIso, userId, h){
+  // мінімально стабільний ключ: дата + user + час + №справи + суд
+  return [
+    dateIso,
+    userId,
+    _normH(h.time),
+    _normH(h.caseNumber),
+    _normH(h.court),
+  ].join("|");
+}
+
 function addHearingToWeekMeta(weekStartIso, dateIso, userId, hearing){
   const w = getWeek(weekStartIso);
   w.dayMeta = w.dayMeta || {};
   w.dayMeta[dateIso] = w.dayMeta[dateIso] || {};
   w.dayMeta[dateIso].hearings = w.dayMeta[dateIso].hearings || {};
   w.dayMeta[dateIso].hearings[userId] = w.dayMeta[dateIso].hearings[userId] || [];
-  w.dayMeta[dateIso].hearings[userId].push(hearing);
+
+  const arr = w.dayMeta[dateIso].hearings[userId];
+
+  const key = _hearingKey(dateIso, userId, hearing);
+  const exists = arr.some(x => _hearingKey(dateIso, userId, x) === key);
+
+  if(!exists){
+    arr.push(hearing);
+  }
 }
+  
 
 async function saveWeekToDB(weekStartIso){
   if(!sb) return;
