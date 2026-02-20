@@ -2750,9 +2750,8 @@ function addHearingToWeekMeta(weekStartIso, dateIso, userId, hearing){
 async function saveWeekToDB(weekStartIso){
   if(!sb) return;
   const w = getWeek(weekStartIso);
-  const row = weekToRow(w);
+  const row = weekToRow(weekStartIso);
 
-  // upsert по week_start
   const { error } = await sb.from("planner_weeks").upsert(row, { onConflict: "week_start" });
   if(error) throw error;
 }
@@ -2798,22 +2797,6 @@ container.innerHTML = `
     let dow = date.toLocaleDateString("uk-UA", { weekday:"long" });
     dow = dow.charAt(0).toUpperCase() + dow.slice(1);
 
-const hs = w.dayMeta?.[dateIso]?.hearings?.[u.id] || [];
-const hearingIcon = hs.length
-  ? `<span class="hearingIcon" title="${escapeHtml(hs.map(x=>`${x.time||""} ${x.caseNumber||""} ${x.court||""}`.trim()).join(" • "))}">⚖️</span>`
-  : "";
-    
-const meUser = currentUser();
-const isMgr = meUser.role === "manager";
-const dayOff = isDayOff(weekStartIso, dIso);
-if(dayOff) dayBox.classList.add("dayoff");
-const bdays = birthdaysOnDate(dIso);
-if(bdays.length) dayBox.classList.add("birthday");
-
-const right = isManager()
-  ? `<div class="slotRight">${tag}${hearingIcon}${menu}</div>`
-  : `<div class="slotRight">${tag}${hearingIcon}</div>`;
-  
     dayBox.innerHTML = `
   <div class="topline">
     <div class="date">${dateLabel}</div>
@@ -2953,7 +2936,14 @@ function renderSlots(weekStartIso, dateIso){
 
   return TEAM.filter(u=>u.role!=="manager").map(u=>{
     const mode = day[u.id] || "office";
-
+    
+// hearings icon for this user on this date
+const hs = (w.dayMeta?.[dateIso]?.hearings?.[u.id]) || [];
+const hearingIcon = hs.length
+  ? `<span class="hearingIcon" title="${escapeHtml(
+      hs.map(x => `${x.time||""} ${x.caseNumber||""} ${x.court||""}`.trim()).join(" • ")
+    )}">⚖️</span>`
+  : "";
     // override info (якщо був) — ДЛЯ ЦЬОГО ЮЗЕРА
     const ov = ovDay[u.id];
     const ovText = ov
@@ -2985,7 +2975,7 @@ return `
 
 <div class="slotRight">
   <span class="tag ${tagClass}">${tagText}</span>
-
+  ${hearingIcon}
   ${canOverride ? `
     <button class="mgrEditBtn" data-act="mgrMenu" data-date="${dateIso}" data-uid="${u.id}" title="Редагувати">✏️</button>
 
