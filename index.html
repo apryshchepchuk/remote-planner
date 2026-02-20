@@ -1708,7 +1708,33 @@ async function loadMyProfile(){
 let PROFILES = [];
 let PROFILE_BY_ID = {};
   
-// === Birthdays (MM-DD) ===
+// === Tech mapping for LD: last_name -> userId ===
+let LASTNAME_TO_ID = {}; // { "петренко": "uuid" }
+
+function normLastName(s){
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function buildLastNameIndexFromProfiles(){
+  LASTNAME_TO_ID = {};
+
+  for(const p of (PROFILES || [])){
+    const ln = normLastName(p?.last_name);
+    if(!p?.id || !ln) continue;
+
+    // якщо раптом дубль прізвища — залишаємо перший і лог у консоль
+    if(LASTNAME_TO_ID[ln] && LASTNAME_TO_ID[ln] !== p.id){
+      console.warn("[LD MATCH] duplicate last_name in profiles:", ln, LASTNAME_TO_ID[ln], p.id);
+      continue;
+    }
+    LASTNAME_TO_ID[ln] = p.id;
+  }
+}
+  
+  // === Birthdays (MM-DD) ===
 let BIRTHDAY_MMDD_BY_ID = {}; // { [userId]: "MM-DD" }
 
 function buildBirthdaysFromProfiles(){
@@ -1732,7 +1758,7 @@ async function refreshProfilesCache(){
   // не блокуємо роботу застосунку, якщо profiles недоступні
   const { data, error } = await sb
     .from("profiles")
-    .select("id,email,full_name,role,birth_mmdd");
+    .select("id,email,full_name,role,birth_mmdd,last_name");
 
   if(error){
     console.warn("refreshProfilesCache error:", error);
@@ -3672,6 +3698,7 @@ async function initAfterLogin(){
   await refreshProfilesCache();
   buildTeamFromProfiles();
   buildBirthdaysFromProfiles();
+  buildLastNameIndexFromProfiles();
 
   // 2) UI for "me" (hidden selector + label)
   initRosterUI();
