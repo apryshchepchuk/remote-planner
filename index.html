@@ -1562,7 +1562,7 @@ document.getElementById("fileImportLD")?.addEventListener("change", async (e) =>
     const hearings = Array.isArray(json) ? json : (json.hearings || []);
     if(!Array.isArray(hearings)) throw new Error("Невірний формат JSON (очікую масив або {hearings:[...]})");
 
-    buildLastNameIndex();
+buildLastNameIndexFromProfiles();
 
     const unmatched = [];
     const touchedWeeks = new Set();
@@ -1593,7 +1593,7 @@ document.getElementById("fileImportLD")?.addEventListener("change", async (e) =>
       await saveWeekToDB(ws);
     }
 
-    renderAll();
+render();
 
     if(unmatched.length){
       alert("Імпорт виконано, але є незнайдені прізвища в profiles.last_name:\n\n" +
@@ -1601,7 +1601,7 @@ document.getElementById("fileImportLD")?.addEventListener("change", async (e) =>
         (unmatched.length>10 ? `\n...і ще ${unmatched.length-10}` : "")
       );
     } else {
-      toast("✅ Засідання імпортовано з LD");
+showToast({ type:"remote", title:"✅ Імпорт LD", message:"Засідання імпортовано" });
     }
   }catch(err){
     console.error(err);
@@ -1682,16 +1682,6 @@ document.getElementById("btnLogout").addEventListener("click", async (e) => {
 
 let TEAM = [];      // [{ id (uuid), name, role: "employee"|"manager", email }]
 let EMAILS = {};    // { [uuid]: email }
-
-let LASTNAME_TO_ID = {};
-
-function buildLastNameIndex(){
-  LASTNAME_TO_ID = {};
-  (PROFILES || []).forEach(p => {
-    const ln = (p.last_name || "").trim().toLowerCase();
-    if(ln) LASTNAME_TO_ID[ln] = p.id;
-  });
-}
   
 function buildTeamFromProfiles(){
   const list = (PROFILES || []).map(p => {
