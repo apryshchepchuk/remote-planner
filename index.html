@@ -1995,10 +1995,11 @@ async function handleImportLDFile(e){
     if(!file) return;
 
     const text = await file.text();
-    const data = JSON.parse(text);
+  const data = JSON.parse(text);
 
-    const hearings = Array.isArray(json) ? json : (json.hearings || []);
-    if(!Array.isArray(hearings)) throw new Error("Невірний формат JSON (очікую масив або {hearings:[...]})");
+// підтримуємо: [ ... ] або { hearings: [ ... ] }
+const hearings = Array.isArray(data) ? data : (data?.hearings || []);
+if(!Array.isArray(hearings)) throw new Error("Невірний формат JSON (очікую масив або {hearings:[...]})");
 
 buildLastNameIndexFromProfiles();
 
@@ -2026,10 +2027,10 @@ buildLastNameIndexFromProfiles();
       });
     }
 
-    // зберігаємо всі зачеплені тижні
-    for(const ws of touchedWeeks){
-      await saveWeekToDB(ws);
-    }
+// зберігаємо тільки day_meta (НЕ чіпаємо reservations/status/day_off)
+for(const ws of touchedWeeks){
+  await mergeDayMetaOnlyToDB(ws);
+}
 
 render();
 
@@ -2752,6 +2753,35 @@ async function saveWeekToDB(weekStartIso){
   const { error } = await sb.from("planner_weeks").upsert(row, { onConflict: "week_start" });
   if(error) throw error;
 }
+
+async function mergeDayMetaOnlyToDB(weekStartIso){
+  if(!sb) return;
+
+  // 1) дістаємо поточний рядок (щоб не затирати reservations/day_off/status)
+  const { data: row, error } = await sb
+    .from("planner_weeks")
+    .select("week_start,day_meta")
+    .eq("week_start", weekStartIso)
+    .maybeSingle();
+
+  if(error) throw error;
+
+  const w = getWeek(weekStartIso);
+  const localMeta = w.dayMeta || {};
+  const dbMeta = (row && row.day_meta) ? row.day_meta : {};
+
+  // 2) мердж: dbMeta + localMeta (local перемагає)
+  const merged = { ...dbMeta, ...localMeta };
+
+  // 3) update тільки day_meta
+  const { error: upErr } = await sb
+    .from("planner_weeks")
+    .update({ day_meta: merged })
+    .eq("week_start", weekStartIso);
+
+  if(upErr) throw upErr;
+}
+
   
   function renderWeekCard(containerId, weekStartIso, isCurrentWeek){
   const container = document.getElementById(containerId);
