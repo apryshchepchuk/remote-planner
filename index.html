@@ -1611,12 +1611,13 @@ let EMAILS = {};    // { [uuid]: email }
 function buildTeamFromProfiles(){
   const list = (PROFILES || []).map(p => {
     const role = (p.role === "manager") ? "manager" : "employee";
-    return {
-      id: p.id,
-      name: p.full_name || p.email || p.id,
-      role,
-      email: p.email || null
-    };
+return {
+  id: p.id,
+  name: p.full_name || p.email || p.id,
+  role,
+  email: p.email || null,
+  last_name: p.last_name || null 
+};
   }).filter(x => !!x.id);
 
   // employees → managers, далі за name
@@ -1691,7 +1692,7 @@ async function loadMyProfile(){
 
   const { data, error } = await sb
     .from("profiles")
-    .select("id,email,full_name,role")
+    .select("id,email,full_name,role,last_name")
     .eq("id", user.id)
     .single();
 
