@@ -1390,6 +1390,7 @@ sb.auth.onAuthStateChange((event, session) => {
 let nextWeekDbUpdatedAt = null;   // last known updated_at in DB for nextWeekStart
 let nextWeekDbSnapshot = null;    // last known DB week (WITHOUT local edits), used to compute local-diff ops
 let nextWeekDirty = false;
+let nextWeekLoaded = false;
   
 function deepCopy(obj){ return JSON.parse(JSON.stringify(obj)); }
 
@@ -1825,23 +1826,31 @@ async function loadNextWeekFromDB(){
     return;
   }
 
-  if(!data){
-    // якщо запису нема — створимо з поточного state
-    await saveNextWeekToDB(true);
-    return;
-  }
-
-  nextWeekDbUpdatedAt = data.updated_at || null;
-
-  const dbWeek = { ...emptyWeek(), ...rowToWeek(data) };
-  nextWeekDbSnapshot = deepCopy(dbWeek);
-
-  // На старті БД — джерело істини (щоб не підміняти чужі зміни старим localStorage)
-  state.weeks[nextWeekStart] = dbWeek;
+if(!data){
+  // тижня в БД ще нема — НЕ створюємо його автоматом,
+  // створиться тільки коли хтось реально змінить графік
+  nextWeekDbUpdatedAt = null;
+  nextWeekDbSnapshot = deepCopy(emptyWeek());
+  state.weeks[nextWeekStart] = deepCopy(emptyWeek());
   localStorage.setItem(LS_KEY, JSON.stringify(state));
+
   nextWeekDirty = false;
+  nextWeekLoaded = true;
+  return;
 }
 
+nextWeekDbUpdatedAt = data.updated_at || null;
+
+const dbWeek = { ...emptyWeek(), ...rowToWeek(data) };
+nextWeekDbSnapshot = deepCopy(dbWeek);
+
+// DB — істина
+state.weeks[nextWeekStart] = dbWeek;
+localStorage.setItem(LS_KEY, JSON.stringify(state));
+
+nextWeekDirty = false;
+nextWeekLoaded = true;
+}
 
 async function loadThisWeekFromDB(){
   if(!isLoggedIn()) return;
@@ -1866,6 +1875,8 @@ async function loadThisWeekFromDB(){
 
 async function saveNextWeekToDB(){
   if(!isLoggedIn()) return;
+  if(!nextWeekLoaded) return;
+  if(!nextWeekDirty) return;
 
   // не запускаємо паралельні записи (debounce може стріляти часто)
   if(saveNextWeekToDB._inFlight) return;
@@ -2119,7 +2130,7 @@ function saveState(){
   // пишемо в Supabase тільки nextWeekStart
   // (і тільки якщо залогінені)
   // пишемо в Supabase тільки коли це НЕ apply з realtime
-  if(!rtApplying) queueSaveNextWeekToDB();
+if(!rtApplying && nextWeekLoaded && nextWeekDirty) queueSaveNextWeekToDB();
 
   if (typeof meSel !== "undefined" && meSel) render();
 }
