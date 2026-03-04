@@ -1389,7 +1389,8 @@ sb.auth.onAuthStateChange((event, session) => {
 // Mechanism: optimistic concurrency check on planner_weeks.updated_at + auto-merge of ONLY the local edits.
 let nextWeekDbUpdatedAt = null;   // last known updated_at in DB for nextWeekStart
 let nextWeekDbSnapshot = null;    // last known DB week (WITHOUT local edits), used to compute local-diff ops
-
+let nextWeekDirty = false;
+  
 function deepCopy(obj){ return JSON.parse(JSON.stringify(obj)); }
 
 function computeWeekOps(baseWeek, currentWeek){
@@ -1548,8 +1549,6 @@ function forceClearSupabaseAuth(){
 document.getElementById("btnLogin").addEventListener("click", async (e) => {
   e.preventDefault();
 
-
-
   const email = document.getElementById("loginEmail").value.trim();
   const password = document.getElementById("loginPass").value;
 
@@ -1569,16 +1568,8 @@ document.getElementById("btnLogin").addEventListener("click", async (e) => {
   currentSession = session;
   setAuthUI(session);
 
-  
-  // realtime only for authenticated users
-  if(isLoggedIn()){
-    startRealtimeForNextWeek();
-    startRealtimeForThisWeek();
-  }else{
-    stopRealtime();
-  }
-
   render();
+  
 // load week in background (don’t block UI)
   if(isLoggedIn()){
     withTimeout(loadNextWeekFromDB(), 2500)
@@ -1848,6 +1839,7 @@ async function loadNextWeekFromDB(){
   // На старті БД — джерело істини (щоб не підміняти чужі зміни старим localStorage)
   state.weeks[nextWeekStart] = dbWeek;
   localStorage.setItem(LS_KEY, JSON.stringify(state));
+  nextWeekDirty = false;
 }
 
 
@@ -1950,12 +1942,14 @@ async function saveNextWeekToDB(){
         // успішно
         nextWeekDbUpdatedAt = r2.data.updated_at || nextWeekDbUpdatedAt;
         nextWeekDbSnapshot = deepCopy(rowToWeek(r2.data));
+        nextWeekDirty = false;
         return;
       }
 
       // успіх з першого разу
       nextWeekDbUpdatedAt = data.updated_at || nextWeekDbUpdatedAt;
       nextWeekDbSnapshot = deepCopy(rowToWeek(data));
+      nextWeekDirty = false;
       return;
     }
 
@@ -1973,6 +1967,7 @@ async function saveNextWeekToDB(){
     if(data){
       nextWeekDbUpdatedAt = data.updated_at || nextWeekDbUpdatedAt;
       nextWeekDbSnapshot = deepCopy(rowToWeek(data));
+      nextWeekDirty = false;
     }
   } finally {
     saveNextWeekToDB._inFlight = false;
@@ -2163,6 +2158,7 @@ function toggleDayOff(weekStartIso, dateIso){
   const w = getWeek(weekStartIso);
   if(!w.dayOff) w.dayOff = {};
   w.dayOff[dateIso] = !w.dayOff[dateIso];
+  if(weekStartIso === nextWeekStart) nextWeekDirty = true;
   saveState();
 }
 
@@ -2188,16 +2184,13 @@ function setManagerOverride(weekStartIso, dateIso, userId, newMode){
   const before = w.reservations[dateIso][userId] || "office";
   const after  = newMode;
 
-  // якщо нічого не змінюємо — виходимо
   if(before === after) return;
 
   const me = currentUser();
   const note = prompt("Причина (коротко). Можна залишити порожнім:", "") || "";
 
-  // ставимо режим
   w.reservations[dateIso][userId] = after;
 
-  // фіксуємо override
   w.overrides[dateIso][userId] = {
     by: me.id,
     at: Date.now(),
@@ -2205,7 +2198,7 @@ function setManagerOverride(weekStartIso, dateIso, userId, newMode){
     to: after,
     note
   };
-
+if(weekStartIso === nextWeekStart) nextWeekDirty = true;
   saveState();
 }
 
@@ -2655,7 +2648,6 @@ host.innerHTML = `
         return;
       }
       
-      // anti-early-approve
       const emps = TEAM.filter(u=>u.role!=="manager");
       const done = emps.filter(u => !!nextWeekSubmissions[u.id]).length;
       if(done < emps.length){
@@ -2663,7 +2655,6 @@ host.innerHTML = `
         if(!ok) return;
       }
 
-      // remote_pending -> remote
       const ws = new Date(nextWeekStart);
       for(let i=0;i<5;i++){
         const dIso = isoDate(addDays(ws,i));
@@ -2677,7 +2668,7 @@ host.innerHTML = `
       w.status = "approved";
       w.approvedBy = me.id;
       w.approvedAt = new Date().toISOString();
-
+      nextWeekDirty = true;
       saveState();
       await saveNextWeekToDB();
       render();
@@ -2694,7 +2685,6 @@ host.innerHTML = `
   }
   if (!confirm("Зняти approve і повернути тиждень у draft?")) return;
 
-  // 1) Пишемо в Supabase тільки meta-поля (не чіпаємо reservations/day_off)
   const { data, error } = await sb
     .from("planner_weeks")
     .update({
@@ -2717,6 +2707,9 @@ host.innerHTML = `
   localStorage.setItem(LS_KEY, JSON.stringify(state));
 
   render();
+nextWeekDbSnapshot = deepCopy(state.weeks[nextWeekStart]);
+nextWeekDbUpdatedAt = data.updated_at || nextWeekDbUpdatedAt;
+nextWeekDirty = false;
 };
   }
     // stats refresh button (manager)
@@ -3065,6 +3058,7 @@ if(w.status === "approved") return alert("Тиждень уже затвердж
   // OFFICE
   if(desiredMode === "office"){
     day[me.id] = "office";
+    if(weekStartIso === nextWeekStart) nextWeekDirty = true;
     saveState();
     return;
   }
@@ -3072,6 +3066,7 @@ if(w.status === "approved") return alert("Тиждень уже затвердж
   // VACATION
   if(desiredMode === "vacation"){
     day[me.id] = "vacation";
+    if(weekStartIso === nextWeekStart) nextWeekDirty = true;
     saveState();
     toastForModeChange({ mode: "vacation", dateIso });
     return;
@@ -3161,7 +3156,7 @@ meta.ts[me.id] = Date.now();
 // зафіксувати, що претендент вже використав дуель на цей день
   duel.attempts[me.id] = (duel.attempts[me.id] || 0) + 1;
   duel.total = (duel.total || 0) + 1;
-
+if(weekStartIso === nextWeekStart) nextWeekDirty = true;
   saveState();
   toastForModeChange({ mode: day[me.id], dateIso });
   return;
@@ -3171,6 +3166,7 @@ meta.ts[me.id] = Date.now();
 day[me.id] = setRemoteWithLimit(me.id);
 const meta = getDayMeta(weekStartIso, dateIso);
 meta.ts[me.id] = Date.now();
+if(weekStartIso === nextWeekStart) nextWeekDirty = true;
 saveState();
 toastForModeChange({ mode: day[me.id], dateIso });
 return;
@@ -3770,20 +3766,23 @@ function startRealtimeForNextWeek(){
           rtApplying = true;
 
           if(payload.eventType === "DELETE"){
-            // record removed — reset local week
-            const dbWeek = emptyWeek();
-            nextWeekDbUpdatedAt = null;
-            nextWeekDbSnapshot = deepCopy(dbWeek);
+const dbWeek = emptyWeek();
+nextWeekDbUpdatedAt = null;
 
-            // if we have local unsaved edits, keep them visible
-            const baseSnap = nextWeekDbSnapshot || dbWeek;
-            const localWeek = state.weeks[nextWeekStart] || emptyWeek();
-            const localOps = computeWeekOps(baseSnap, localWeek);
+if(!nextWeekDirty){
+  nextWeekDbSnapshot = deepCopy(dbWeek);
+  state.weeks[nextWeekStart] = dbWeek;
+}else{
+  const baseSnap = nextWeekDbSnapshot || dbWeek;
+  const localWeek = state.weeks[nextWeekStart] || emptyWeek();
+  const localOps = computeWeekOps(baseSnap, localWeek);
 
-            const viewWeek = deepCopy(dbWeek);
-            applyWeekOps(viewWeek, localOps);
+  nextWeekDbSnapshot = deepCopy(dbWeek);
 
-            state.weeks[nextWeekStart] = viewWeek;
+  const viewWeek = deepCopy(dbWeek);
+  applyWeekOps(viewWeek, localOps);
+  state.weeks[nextWeekStart] = viewWeek;
+}
           }else{
             const row = payload.new;
             if(row){
@@ -3792,17 +3791,31 @@ function startRealtimeForNextWeek(){
 
               const dbWeek = { ...emptyWeek(), ...rowToWeek(row) };
 
-              // if we have local unsaved edits, reapply them on top of the incoming DB state
-              const baseSnap = nextWeekDbSnapshot || dbWeek;
-              const localWeek = state.weeks[nextWeekStart] || emptyWeek();
-              const localOps = computeWeekOps(baseSnap, localWeek);
+const dbWeek = { ...emptyWeek(), ...rowToWeek(row) };
 
-              nextWeekDbSnapshot = deepCopy(dbWeek);
+// 1) якщо snapshot ще нема — приймаємо DB як істину
+if(!nextWeekDbSnapshot){
+  nextWeekDbSnapshot = deepCopy(dbWeek);
+  state.weeks[nextWeekStart] = dbWeek;
+} 
+// 2) якщо немає локальних незбережених правок — теж приймаємо DB як істину
+else if(!nextWeekDirty){
+  nextWeekDbSnapshot = deepCopy(dbWeek);
+  state.weeks[nextWeekStart] = dbWeek;
+}
+// 3) тільки якщо nextWeekDirty=true — накладаємо локальні правки поверх DB
+else{
+  const baseSnap = nextWeekDbSnapshot;
+  const localWeek = state.weeks[nextWeekStart] || emptyWeek();
+  const localOps = computeWeekOps(baseSnap, localWeek);
 
-              const viewWeek = deepCopy(dbWeek);
-              applyWeekOps(viewWeek, localOps);
+  nextWeekDbSnapshot = deepCopy(dbWeek);
 
-              state.weeks[nextWeekStart] = viewWeek;
+  const viewWeek = deepCopy(dbWeek);
+  applyWeekOps(viewWeek, localOps);
+
+  state.weeks[nextWeekStart] = viewWeek;
+}
             }
           }
 
