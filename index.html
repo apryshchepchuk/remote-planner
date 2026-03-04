@@ -3785,38 +3785,36 @@ if(!nextWeekDirty){
 }
           }else{
             const row = payload.new;
-            if(row){
-              // keep last DB updated_at for optimistic locking
-              nextWeekDbUpdatedAt = row.updated_at || nextWeekDbUpdatedAt;
+if(row){
+  // keep last DB updated_at for optimistic locking
+  nextWeekDbUpdatedAt = row.updated_at || nextWeekDbUpdatedAt;
 
-              const dbWeek = { ...emptyWeek(), ...rowToWeek(row) };
+  const dbWeek = { ...emptyWeek(), ...rowToWeek(row) };
 
-const dbWeek = { ...emptyWeek(), ...rowToWeek(row) };
+  // 1) якщо snapshot ще нема — приймаємо DB як істину
+  if(!nextWeekDbSnapshot){
+    nextWeekDbSnapshot = deepCopy(dbWeek);
+    state.weeks[nextWeekStart] = dbWeek;
+  }
+  // 2) якщо немає локальних незбережених правок — теж приймаємо DB як істину
+  else if(!nextWeekDirty){
+    nextWeekDbSnapshot = deepCopy(dbWeek);
+    state.weeks[nextWeekStart] = dbWeek;
+  }
+  // 3) тільки якщо nextWeekDirty=true — накладаємо локальні правки поверх DB
+  else{
+    const baseSnap = nextWeekDbSnapshot;
+    const localWeek = state.weeks[nextWeekStart] || emptyWeek();
+    const localOps = computeWeekOps(baseSnap, localWeek);
 
-// 1) якщо snapshot ще нема — приймаємо DB як істину
-if(!nextWeekDbSnapshot){
-  nextWeekDbSnapshot = deepCopy(dbWeek);
-  state.weeks[nextWeekStart] = dbWeek;
-} 
-// 2) якщо немає локальних незбережених правок — теж приймаємо DB як істину
-else if(!nextWeekDirty){
-  nextWeekDbSnapshot = deepCopy(dbWeek);
-  state.weeks[nextWeekStart] = dbWeek;
+    nextWeekDbSnapshot = deepCopy(dbWeek);
+
+    const viewWeek = deepCopy(dbWeek);
+    applyWeekOps(viewWeek, localOps);
+
+    state.weeks[nextWeekStart] = viewWeek;
+  }
 }
-// 3) тільки якщо nextWeekDirty=true — накладаємо локальні правки поверх DB
-else{
-  const baseSnap = nextWeekDbSnapshot;
-  const localWeek = state.weeks[nextWeekStart] || emptyWeek();
-  const localOps = computeWeekOps(baseSnap, localWeek);
-
-  nextWeekDbSnapshot = deepCopy(dbWeek);
-
-  const viewWeek = deepCopy(dbWeek);
-  applyWeekOps(viewWeek, localOps);
-
-  state.weeks[nextWeekStart] = viewWeek;
-}
-            }
           }
 
           // write only to localStorage (NO saveState -> no DB write)
