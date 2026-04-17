@@ -2184,7 +2184,9 @@ function canManagerOverride(weekStartIso){
 }
 
 function setManagerOverride(weekStartIso, dateIso, userId, newMode){
-  if(!canManagerOverride(weekStartIso)) return alert("Override доступний керівнику лише ДО Approve.");
+  if(!canManagerOverride(weekStartIso)) {
+    return alert("Override доступний керівнику лише ДО Approve.");
+  }
 
   const w = getWeek(weekStartIso);
   if(!w.reservations[dateIso]) w.reservations[dateIso] = {};
@@ -2195,10 +2197,11 @@ function setManagerOverride(weekStartIso, dateIso, userId, newMode){
   const after  = newMode;
 
   if(after === "remote" && !canAssignRemoteByOfficeRule(weekStartIso, dateIso, userId)){
-  return alert(
-    `Не можна поставити Remote: у цей день в офісі має лишатися щонайменше ` +
-    `${minOfficeRequired()} з ${employeeCount()} працівників.`
-  );
+    return alert(
+      `Не можна поставити Remote: у цей день в офісі має лишатися щонайменше ` +
+      `${minOfficeRequired()} з ${employeeCount()} працівників.`
+    );
+  }
 
   if(before === after) return;
 
@@ -2214,7 +2217,8 @@ function setManagerOverride(weekStartIso, dateIso, userId, newMode){
     to: after,
     note
   };
-if(weekStartIso === nextWeekStart) nextWeekDirty = true;
+
+  if(weekStartIso === nextWeekStart) nextWeekDirty = true;
   saveState();
 }
 
@@ -2899,7 +2903,6 @@ container.innerHTML = `
 }
 
 
-    if(remoteCount >= LIMIT_REMOTE_PER_DAY) dayBox.classList.add("remote-full");
     if(day[me.id] === "remote") dayBox.classList.add("is-me-remote");
     if(hasPendingInDay(weekStartIso, dIso)) dayBox.classList.add("has-pending");
 
