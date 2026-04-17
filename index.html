@@ -1660,7 +1660,6 @@ function setMeToLoggedInUser(){
   }
 }
 
-const LIMIT_REMOTE_PER_DAY = 2;
 const LS_KEY = "hybrid_league_v2";
 
 /** =============================
@@ -2195,6 +2194,12 @@ function setManagerOverride(weekStartIso, dateIso, userId, newMode){
   const before = w.reservations[dateIso][userId] || "office";
   const after  = newMode;
 
+  if(after === "remote" && !canAssignRemoteByOfficeRule(weekStartIso, dateIso, userId)){
+  return alert(
+    `Не можна поставити Remote: у цей день в офісі має лишатися щонайменше ` +
+    `${minOfficeRequired()} з ${employeeCount()} працівників.`
+  );
+
   if(before === after) return;
 
   const me = currentUser();
@@ -2289,6 +2294,49 @@ if(btnToggleFilled){
 /** =============================
  * 5) Counters
  * ============================= */
+
+function employeeCount(){
+  return TEAM.filter(isEmployee).length;
+}
+
+function minOfficeRequired(){
+  return Math.ceil(employeeCount() * 0.5);
+}
+
+function getModeFromDay(day, userId){
+  return day[userId] || "office";
+}
+
+function countOfficeUsersInDay(day){
+  return TEAM
+    .filter(isEmployee)
+    .filter(u => {
+      const mode = getModeFromDay(day, u.id);
+      return mode !== "remote" && mode !== "remote_pending" && mode !== "vacation";
+    })
+    .length;
+}
+
+function canAssignRemoteByOfficeRule(weekStartIso, dateIso, userId){
+  const w = getWeek(weekStartIso);
+  const simulatedDay = { ...(w.reservations[dateIso] || {}) };
+
+  // симулюємо стан ПІСЛЯ вибору remote
+  simulatedDay[userId] = "remote";
+
+  const officeAfter = countOfficeUsersInDay(simulatedDay);
+  return officeAfter >= minOfficeRequired();
+}
+
+function isRemoteFullByOfficeRule(weekStartIso, dateIso){
+  const w = getWeek(weekStartIso);
+  const day = w.reservations[dateIso] || {};
+
+  // якщо зараз в офісі рівно мінімум або менше —
+  // ще один remote уже не можна дати без порушення правила
+  return countOfficeUsersInDay(day) <= minOfficeRequired();
+}
+  
 function countRemoteDay(weekStartIso, dateIso){
   const w = getWeek(weekStartIso);
   const day = w.reservations[dateIso] || {};
@@ -2845,7 +2893,11 @@ container.innerHTML = `
     const day = w.reservations?.[dIso] || {};
     const dayOff = isDayOff(weekStartIso, dIso);
     const bdays = birthdaysOnDate(dIso);
-    const remoteCount = Object.values(day).filter(v => v === "remote" || v === "remote_pending").length;
+    
+    if(isRemoteFullByOfficeRule(weekStartIso, dIso)) {
+  dayBox.classList.add("remote-full");
+}
+
 
     if(remoteCount >= LIMIT_REMOTE_PER_DAY) dayBox.classList.add("remote-full");
     if(day[me.id] === "remote") dayBox.classList.add("is-me-remote");
@@ -3104,32 +3156,38 @@ console.log("[REMOTE DEBUG]", {
   dayValues: Object.values(day),
 });
 
-const remoteCount = countRemoteDay(weekStartIso, dateIso);
+const canTakeRemoteNow = canAssignRemoteByOfficeRule(weekStartIso, dateIso, me.id);
 
-if(remoteCount >= LIMIT_REMOTE_PER_DAY){
-// === DUEL LOCKS (anti-spam) ===
+if(!canTakeRemoteNow){
+  // якщо remote вже в когось є — можна лишити стару дуель/заміщення
+  const defenderId = pickDefender(weekStartIso, dateIso);
+
+  // якщо нікого на remote немає, то просто блокуємо вибір
+  if(!defenderId){
+    alert(
+      `Remote недоступний: у цей день в офісі має лишатися щонайменше ` +
+      `${minOfficeRequired()} з ${employeeCount()} працівників.`
+    );
+    return;
+  }
+
+  // === DUEL LOCKS (anti-spam) ===
   const duel = getDuelState(weekStartIso, dateIso);
 
-  // 1) одна спроба дуелі на день для кожного працівника
   if((duel.attempts[me.id] || 0) >= 1){
     alert("Ти вже брав(ла) участь у дуелі цього дня. Повторна дуель недоступна.");
     return;
   }
 
-  // 2) ліміт дуелей на день (щоб не було ланцюжка реваншів)
-  //    (можеш поставити 1, якщо хочеш взагалі максимум одну дуель на день)
   const MAX_DUELS_PER_DAY = 2;
   if((duel.total || 0) >= MAX_DUELS_PER_DAY){
     alert("Ліміт дуелей на цей день вичерпано. Зміни можливі лише вручну (керівником) або іншим днем.");
     return;
   }
-  // slots full => resolve conflict
-  const defenderId = pickDefender(weekStartIso, dateIso);
-  const defender = TEAM.find(u=>u.id===defenderId);
 
+  const defender = TEAM.find(u => u.id === defenderId);
   if(!defender){
     alert("Помилка: не знайшов defender для конфлікту. Перевір консоль.");
-    console.log("[REMOTE DEBUG] defenderId", defenderId, "day", day);
     return;
   }
 
@@ -3158,16 +3216,17 @@ if(remoteCount >= LIMIT_REMOTE_PER_DAY){
   if(ok){
     day[defenderId] = "office";
     day[me.id] = setRemoteWithLimit(me.id);
-const meta = getDayMeta(weekStartIso, dateIso);
-meta.ts[me.id] = Date.now();
+    const meta = getDayMeta(weekStartIso, dateIso);
+    meta.ts[me.id] = Date.now();
     bumpStats(me.id, defenderId);
   } else {
     bumpStats(defenderId, me.id);
   }
-// зафіксувати, що претендент вже використав дуель на цей день
+
   duel.attempts[me.id] = (duel.attempts[me.id] || 0) + 1;
   duel.total = (duel.total || 0) + 1;
-if(weekStartIso === nextWeekStart) nextWeekDirty = true;
+
+  if(weekStartIso === nextWeekStart) nextWeekDirty = true;
   saveState();
   toastForModeChange({ mode: day[me.id], dateIso });
   return;
