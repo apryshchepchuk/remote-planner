@@ -2647,8 +2647,9 @@ function renderManagerControls(){
   const isApproved = (w.status === "approved");
 
 host.innerHTML = `
-  <button id="mgrApprove" class="ok" ${isApproved ? "disabled" : ""}>Approve week</button>
-  <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"} title="Повернути в draft">Unapprove</button>
+  <button id="mgrApprove" class="ok" ${isApproved ? "disabled" : ""}>Approve next week</button>
+  <button id="mgrApproveCurrent" class="ok">Approve current week</button>
+  <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"} title="Повернути в draft">Unapprove next</button>
   <button id="btnImportLD" class="tabBtn" type="button" title="Суди">⚖️</button>
   <input id="fileImportLD" type="file" accept="application/json" style="display:none" />
 
@@ -2671,6 +2672,7 @@ host.innerHTML = `
   
   const btnApprove = document.getElementById("mgrApprove");
   const btnUnapprove = document.getElementById("mgrUnapprove");
+  const btnApproveCurrent = document.getElementById("mgrApproveCurrent");
   const btnEmail = document.getElementById("mgrEmailBlast");
 
   // Вибір тижня для розсилки:
@@ -2710,6 +2712,63 @@ host.innerHTML = `
         alert("Тиждень уже не в статусі draft. Повторний approve не потрібен.");
         return;
       }
+
+     if(btnApproveCurrent){
+  const wCurrent = getWeek(thisWeekStart);
+  btnApproveCurrent.disabled = (wCurrent.status === "approved");
+  btnApproveCurrent.title = (wCurrent.status === "approved")
+    ? "Поточний тиждень уже approved"
+    : `Approve current week: ${thisWeekStart}`;
+
+  btnApproveCurrent.onclick = async () => {
+    const wCur = getWeek(thisWeekStart);
+
+    if(wCur.status === "approved"){
+      alert("Поточний тиждень уже approved.");
+      return;
+    }
+
+    const ok = confirm(`Затвердити поточний тиждень (${thisWeekStart})?`);
+    if(!ok) return;
+
+    const me = currentUser();
+
+    const row = {
+      week_start: thisWeekStart,
+      status: "approved",
+      approved_by: me.id,
+      approved_at: new Date().toISOString(),
+      reservations: wCur.reservations || {},
+      day_off: wCur.dayOff || {},
+      overrides: wCur.overrides || {},
+      duels: wCur.duels || {},
+      day_meta: wCur.dayMeta || {}
+    };
+
+    const { data, error } = await sb
+      .from("planner_weeks")
+      .upsert(row, { onConflict: "week_start" })
+      .select("*")
+      .single();
+
+    if(error){
+      console.error("approve current week error:", error);
+      alert("Не вдалося затвердити поточний тиждень: " + error.message);
+      return;
+    }
+
+    state.weeks[thisWeekStart] = { ...emptyWeek(), ...rowToWeek(data) };
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+
+    render();
+
+    try{
+      autoDownloadSummaryEml(thisWeekStart);
+    }catch(e){
+      console.error("autoDownloadSummaryEml current week failed:", e);
+    }
+  };
+} 
       
       const emps = TEAM.filter(u=>u.role!=="manager");
       const done = emps.filter(u => !!nextWeekSubmissions[u.id]).length;
