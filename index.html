@@ -2710,63 +2710,64 @@ function renderManagerControls(){
 
   // ✅ ОКРЕМИЙ handler для Approve current week
   // ВАЖЛИВО: він має бути на одному рівні з btnApprove, а не всередині btnApprove.onclick
-  if(btnApproveCurrent){
-    const wCurrent = getWeek(thisWeekStart);
+if(btnApproveCurrent){
+  const wCurrent = getWeek(thisWeekStart);
 
-    btnApproveCurrent.disabled = (wCurrent.status === "approved");
-    btnApproveCurrent.title = (wCurrent.status === "approved")
-      ? "Поточний тиждень уже approved"
-      : `Approve current week: ${thisWeekStart}`;
+  btnApproveCurrent.disabled = (wCurrent.status === "approved");
+  btnApproveCurrent.title = (wCurrent.status === "approved")
+    ? "Поточний тиждень уже approved"
+    : `Approve current week: ${thisWeekStart}`;
 
-    btnApproveCurrent.onclick = async () => {
-      const wCur = getWeek(thisWeekStart);
+  btnApproveCurrent.onclick = async () => {
+    const wCur = getWeek(thisWeekStart);
 
-      if(wCur.status === "approved"){
-        alert("Поточний тиждень уже approved.");
-        return;
-      }
+    if(wCur.status === "approved"){
+      alert("Поточний тиждень уже approved.");
+      return;
+    }
 
-      const ok = confirm(`Затвердити поточний тиждень (${thisWeekStart})?`);
-      if(!ok) return;
+    const ok = confirm(`Затвердити поточний тиждень (${thisWeekStart})?`);
+    if(!ok) return;
 
-      const me = currentUser();
+    const me = currentUser();
 
-      const row = {
-        week_start: thisWeekStart,
+    const { data, error } = await sb
+      .from("planner_weeks")
+      .update({
         status: "approved",
         approved_by: me.id,
-        approved_at: new Date().toISOString(),
-        reservations: wCur.reservations || {},
-        day_off: wCur.dayOff || {},
-        overrides: wCur.overrides || {},
-        duels: wCur.duels || {},
-        day_meta: wCur.dayMeta || {}
-      };
+        approved_at: new Date().toISOString()
+      })
+      .eq("week_start", thisWeekStart)
+      .select("*")
+      .maybeSingle();
 
-      const { data, error } = await sb
-        .from("planner_weeks")
-        .upsert(row, { onConflict: "week_start" })
-        .select("*")
-        .single();
+    if(error){
+      console.error("approve current week error:", error);
+      alert("Не вдалося затвердити поточний тиждень: " + error.message);
+      return;
+    }
 
-      if(error){
-        console.error("approve current week error:", error);
-        alert("Не вдалося затвердити поточний тиждень: " + error.message);
-        return;
-      }
+    if(!data){
+      alert(
+        "Не вдалося затвердити поточний тиждень: запису цього тижня немає в planner_weeks. " +
+        "Спочатку потрібно, щоб тиждень існував у базі."
+      );
+      return;
+    }
 
-      state.weeks[thisWeekStart] = { ...emptyWeek(), ...rowToWeek(data) };
-      localStorage.setItem(LS_KEY, JSON.stringify(state));
+    state.weeks[thisWeekStart] = { ...emptyWeek(), ...rowToWeek(data) };
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
 
-      render();
+    render();
 
-      try{
-        autoDownloadSummaryEml(thisWeekStart);
-      }catch(e){
-        console.error("autoDownloadSummaryEml current week failed:", e);
-      }
-    };
-  }
+    try{
+      autoDownloadSummaryEml(thisWeekStart);
+    }catch(e){
+      console.error("autoDownloadSummaryEml current week failed:", e);
+    }
+  };
+}
 
   // ✅ Старий handler для Approve next week
   if(btnApprove){
