@@ -2340,6 +2340,24 @@ function isRemoteFullByOfficeRule(weekStartIso, dateIso){
   // ще один remote уже не можна дати без порушення правила
   return countOfficeUsersInDay(day) <= minOfficeRequired();
 }
+
+function rebalanceOfficeMinimumByPushingRemote(weekStartIso, dateIso){
+  const w = getWeek(weekStartIso);
+  if(!w.reservations[dateIso]) w.reservations[dateIso] = {};
+  const day = w.reservations[dateIso];
+
+  const pushedUserIds = [];
+
+  while(countOfficeUsersInDay(day) < minOfficeRequired()){
+    const defenderId = pickDefender(weekStartIso, dateIso); // найраніше обраний remote
+    if(!defenderId) break;
+
+    day[defenderId] = "office";
+    pushedUserIds.push(defenderId);
+  }
+
+  return pushedUserIds;
+}
   
 function countRemoteDay(weekStartIso, dateIso){
   const w = getWeek(weekStartIso);
@@ -3212,8 +3230,19 @@ if(w.status === "approved") return alert("Тиждень уже затвердж
   // VACATION
   if(desiredMode === "vacation"){
     day[me.id] = "vacation";
+
+    const pushedUserIds = rebalanceOfficeMinimumByPushingRemote(weekStartIso, dateIso);
+
     if(weekStartIso === nextWeekStart) nextWeekDirty = true;
     saveState();
+
+    if(pushedUserIds.length){
+      alert(
+        "Через правило мінімальної присутності в офісі автоматично переведено в Office: " +
+        pushedUserIds.map(getUserNameById).join(", ")
+      );
+    }
+
     toastForModeChange({ mode: "vacation", dateIso });
     return;
   }
