@@ -2349,11 +2349,11 @@ function rebalanceOfficeMinimumByPushingRemote(weekStartIso, dateIso){
   const pushedUserIds = [];
 
   while(countOfficeUsersInDay(day) < minOfficeRequired()){
-    const defenderId = pickDefender(weekStartIso, dateIso); // найраніше обраний remote
-    if(!defenderId) break;
+    const pushedId = pickLatestRemoteForRebalance(weekStartIso, dateIso);
+    if(!pushedId) break;
 
-    day[defenderId] = "office";
-    pushedUserIds.push(defenderId);
+    day[pushedId] = "office";
+    pushedUserIds.push(pushedId);
   }
 
   return pushedUserIds;
@@ -2437,6 +2437,22 @@ function pickDefender(weekStartIso, dateIso){
   // найраніший timestamp = "перший зайняв" = defender
   defenders.sort((a,b) => (meta[a] || 0) - (meta[b] || 0));
   return defenders[0];
+}
+
+function pickLatestRemoteForRebalance(weekStartIso, dateIso){
+  const w = getWeek(weekStartIso);
+  const day = w.reservations[dateIso] || {};
+  const meta = (w.dayMeta && w.dayMeta[dateIso] && w.dayMeta[dateIso].ts) ? w.dayMeta[dateIso].ts : {};
+
+  const remoteUsers = Object.entries(day)
+    .filter(([uid, mode]) => mode === "remote" || mode === "remote_pending")
+    .map(([uid]) => uid);
+
+  if(remoteUsers.length === 0) return null;
+
+  // найпізніший timestamp = останній, хто зайняв remote
+  remoteUsers.sort((a,b) => (meta[b] || 0) - (meta[a] || 0));
+  return remoteUsers[0];
 }
 
 /** =============================
