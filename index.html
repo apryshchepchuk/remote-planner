@@ -3011,7 +3011,10 @@ container.innerHTML = `
     const day = w.reservations?.[dIso] || {};
     const dayOff = isDayOff(weekStartIso, dIso);
     const bdays = birthdaysOnDate(dIso);
-    
+
+    if(bdays && bdays.length) {
+  dayBox.classList.add("birthday");
+}
     if(isRemoteFullByOfficeRule(weekStartIso, dIso)) {
   dayBox.classList.add("remote-full");
 }
