@@ -3733,6 +3733,60 @@ function buildSummaryEMLForWeek(weekStartIso, senderName, senderEmail, recipient
 
   return lines.join("\r\n");
 }
+
+/**
+ * Машиночитані дані для персональних Power Automate flows.
+ *
+ * Блок додається до HTML листа невидимим і не змінює його оформлення.
+ * JSON кодується в Base64, щоб ПІБ, email та службові символи не ламали HTML
+ * або quoted-printable кодування EML.
+ *
+ * Power Automate:
+ *  1) бере текст між RP_SCHEDULE_V1_START: та :RP_SCHEDULE_V1_END;
+ *  2) декодує його через base64ToString(...);
+ *  3) розбирає як JSON.
+ */
+function buildPowerAutomateScheduleBlock(weekStartIso){
+  const w = getWeek(weekStartIso);
+  const ws = new Date(weekStartIso);
+  const employees = TEAM.filter(u => u.role !== "manager");
+  const approver = w.approvedBy ? (PROFILE_BY_ID[w.approvedBy] || null) : null;
+
+  const payload = {
+    schema: "remote-planner.schedule.v1",
+    weekStart: weekStartIso,
+    weekEnd: isoDate(addDays(ws, 4)),
+    approvedAt: w.approvedAt || null,
+    approvedBy: approver ? {
+      id: approver.id || w.approvedBy || null,
+      name: approver.full_name || approver.email || null,
+      email: approver.email || null
+    } : null,
+    employees: employees.map(u => ({
+      id: u.id,
+      name: u.name,
+      email: EMAILS[u.id] || u.email || null,
+      days: Array.from({ length: 5 }, (_, i) => {
+        const date = isoDate(addDays(ws, i));
+        const isDayOff = !!(w.dayOff && w.dayOff[date]);
+        const status = isDayOff
+          ? "day_off"
+          : (w.reservations?.[date]?.[u.id] || "office");
+
+        return { date, status };
+      })
+    }))
+  };
+
+  const encoded = b64utf8(JSON.stringify(payload));
+
+  return `
+    <div aria-hidden="true"
+      style="display:none!important;mso-hide:all!important;max-height:0;max-width:0;overflow:hidden;opacity:0;font-size:0;line-height:0;color:transparent;">
+      RP_SCHEDULE_V1_START:${encoded}:RP_SCHEDULE_V1_END
+    </div>
+  `;
+}
   
 /**
  * HTML summary БЕЗ emoji/іконок (бо Outlook показує ??).
@@ -3813,9 +3867,11 @@ function buildSummaryHtmlTable_NoIcons(weekStartIso){
   const approvedLine = (approver && approvedAt)
     ? `Погоджено: <b>${approver.full_name || approver.email || "керівник"}</b>, ${approvedAt.toLocaleString("uk-UA", { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" })}`
     : "";
+  const powerAutomateBlock = buildPowerAutomateScheduleBlock(weekStartIso);
 
   return `
     <div style="font-family:Segoe UI, Arial, sans-serif;color:#0F172A;">
+      ${powerAutomateBlock}
       <div style="font-size:16px;font-weight:800;margin:0 0 6px;">Графік office/remote: ${range}</div>
       <div style="color:#64748B;font-size:13px;margin:0 0 10px;">Підсумок тижня після approve.</div>
       ${approvedLine ? `<div style="color:#334155;font-size:13px;margin:0 0 14px;">${approvedLine}</div>` : ``}
