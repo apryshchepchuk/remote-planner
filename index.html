@@ -1000,19 +1000,6 @@ button.bad:hover{ border-color: rgba(190,18,60,.75); }
   outline-offset: 2px;
 }
 
-  .hearingIcon{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  width: 28px;
-  height: 24px;
-  border-radius: 999px;
-  border: 1px solid rgba(229,231,235,.95);
-  background: rgba(2,6,23,.04);
-  font-size: 14px;
-  cursor: default;
-}
-  
 </style>
 </head>
 
@@ -1716,32 +1703,6 @@ async function loadMyProfile(){
 let PROFILES = [];
 let PROFILE_BY_ID = {};
   
-// === Tech mapping for LD: last_name -> userId ===
-let LASTNAME_TO_ID = {}; // { "петренко": "uuid" }
-
-function normLastName(s){
-  return String(s || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-}
-
-function buildLastNameIndexFromProfiles(){
-  LASTNAME_TO_ID = {};
-
-  for(const p of (PROFILES || [])){
-    const ln = normLastName(p?.last_name);
-    if(!p?.id || !ln) continue;
-
-    // якщо раптом дубль прізвища — залишаємо перший і лог у консоль
-    if(LASTNAME_TO_ID[ln] && LASTNAME_TO_ID[ln] !== p.id){
-      console.warn("[LD MATCH] duplicate last_name in profiles:", ln, LASTNAME_TO_ID[ln], p.id);
-      continue;
-    }
-    LASTNAME_TO_ID[ln] = p.id;
-  }
-}
-  
   // === Birthdays (MM-DD) ===
 let BIRTHDAY_MMDD_BY_ID = {}; // { [userId]: "MM-DD" }
 
@@ -1996,68 +1957,6 @@ function queueSaveNextWeekToDB(){
   }, 400); // 300–500 мс оптимально
 }
   
-async function handleImportLDFile(e){
-  try{
-    const file = e.target.files?.[0];
-    if(!file) return;
-
-    const text = await file.text();
-  const data = JSON.parse(text);
-
-// підтримуємо: [ ... ] або { hearings: [ ... ] }
-const hearings = Array.isArray(data) ? data : (data?.hearings || []);
-if(!Array.isArray(hearings)) throw new Error("Невірний формат JSON (очікую масив або {hearings:[...]})");
-
-buildLastNameIndexFromProfiles();
-
-    const unmatched = [];
-    const touchedWeeks = new Set();
-
-    for(const h of hearings){
-      const dateIso = h.date;
-      if(!dateIso) continue;
-
-      const ln = String(h.responsible_last_name || "").trim().toLowerCase();
-      const uid = LASTNAME_TO_ID[ln];
-      if(!uid){
-        unmatched.push({ date: dateIso, who: h.responsible_last_name, caseNumber: h.caseNumber });
-        continue;
-      }
-
-      const ws = weekStartFromDateIso(dateIso);
-      touchedWeeks.add(ws);
-
-      addHearingToWeekMeta(ws, dateIso, uid, {
-        time: h.time || "",
-        court: h.court || "",
-        caseNumber: h.caseNumber || ""
-      });
-    }
-
-// зберігаємо тільки day_meta (НЕ чіпаємо reservations/status/day_off)
-for(const ws of touchedWeeks){
-  await mergeDayMetaOnlyToDB(ws);
-}
-
-render();
-
-    if(unmatched.length){
-      alert("Імпорт виконано, але є незнайдені прізвища в profiles.last_name:\n\n" +
-        unmatched.slice(0,10).map(x=>`${x.date}: ${x.who || "??"} (${x.caseNumber || ""})`).join("\n") +
-        (unmatched.length>10 ? `\n...і ще ${unmatched.length-10}` : "")
-      );
-    } else {
-showToast({ type:"remote", title:"✅ Імпорт LD", message:"Засідання імпортовано" });
-    }
-  
-  }catch(err){
-    console.error(err);
-    alert("Помилка імпорту LD: " + (err?.message || err));
-  }finally{
-    e.target.value = ""; // щоб можна було імпортувати той самий файл повторно
-  }
-}
-
 /** =============================
  * 2) State model
  *  - store per weekStart: weeks[weekStartIso] = {status, reservations, approvedBy, approvedAt}
@@ -2687,9 +2586,6 @@ function renderManagerControls(){
     <button id="mgrApprove" class="ok" ${isApproved ? "disabled" : ""}>Approve next week</button>
     <button id="mgrApproveCurrent" class="ok">Approve current week</button>
     <button id="mgrUnapprove" class="bad" ${isApproved ? "" : "disabled"} title="Повернути в draft">Unapprove next</button>
-    <button id="btnImportLD" class="tabBtn" type="button" title="Суди">⚖️</button>
-    <input id="fileImportLD" type="file" accept="application/json" style="display:none" />
-
     <button id="mgrEmailBlast"
             type="button"
             class="mailIconBtn"
@@ -2698,14 +2594,6 @@ function renderManagerControls(){
       ✉️
     </button>
   `;
-
-  const btnImport = host.querySelector("#btnImportLD");
-  const fileInput = host.querySelector("#fileImportLD");
-
-  if(btnImport && fileInput){
-    btnImport.onclick = () => fileInput.click();
-    fileInput.onchange = handleImportLDFile;
-  }
 
   const btnApprove = document.getElementById("mgrApprove");
   const btnUnapprove = document.getElementById("mgrUnapprove");
@@ -2902,46 +2790,6 @@ if(btnApproveCurrent){
   }
 }
 
-function weekStartFromDateIso(dateIso){
-  const d = new Date(dateIso + "T00:00:00");
-  const dow = (d.getDay() + 6) % 7; // Mon=0
-  d.setDate(d.getDate() - dow);
-  return isoDate(d);
-}
-
-function _normH(s){
-  return String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function _hearingKey(dateIso, userId, h){
-  // мінімально стабільний ключ: дата + user + час + №справи + суд
-  return [
-    dateIso,
-    userId,
-    _normH(h.time),
-    _normH(h.caseNumber),
-    _normH(h.court),
-  ].join("|");
-}
-
-function addHearingToWeekMeta(weekStartIso, dateIso, userId, hearing){
-  const w = getWeek(weekStartIso);
-  w.dayMeta = w.dayMeta || {};
-  w.dayMeta[dateIso] = w.dayMeta[dateIso] || {};
-  w.dayMeta[dateIso].hearings = w.dayMeta[dateIso].hearings || {};
-  w.dayMeta[dateIso].hearings[userId] = w.dayMeta[dateIso].hearings[userId] || [];
-
-  const arr = w.dayMeta[dateIso].hearings[userId];
-
-  const key = _hearingKey(dateIso, userId, hearing);
-  const exists = arr.some(x => _hearingKey(dateIso, userId, x) === key);
-
-  if(!exists){
-    arr.push(hearing);
-  }
-}
-  
-
 async function saveWeekToDB(weekStartIso){
   if(!sb) return;
   const w = getWeek(weekStartIso);
@@ -2951,35 +2799,6 @@ async function saveWeekToDB(weekStartIso){
   if(error) throw error;
 }
 
-async function mergeDayMetaOnlyToDB(weekStartIso){
-  if(!sb) return;
-
-  // 1) дістаємо поточний рядок (щоб не затирати reservations/day_off/status)
-  const { data: row, error } = await sb
-    .from("planner_weeks")
-    .select("week_start,day_meta")
-    .eq("week_start", weekStartIso)
-    .maybeSingle();
-
-  if(error) throw error;
-
-  const w = getWeek(weekStartIso);
-  const localMeta = w.dayMeta || {};
-  const dbMeta = (row && row.day_meta) ? row.day_meta : {};
-
-  // 2) мердж: dbMeta + localMeta (local перемагає)
-  const merged = { ...dbMeta, ...localMeta };
-
-  // 3) update тільки day_meta
-  const { error: upErr } = await sb
-    .from("planner_weeks")
-    .update({ day_meta: merged })
-    .eq("week_start", weekStartIso);
-
-  if(upErr) throw upErr;
-}
-
-  
   function renderWeekCard(containerId, weekStartIso, isCurrentWeek){
   const container = document.getElementById(containerId);
   const w = getWeek(weekStartIso);
@@ -3170,13 +2989,6 @@ function renderSlots(weekStartIso, dateIso){
   return TEAM.filter(u=>u.role!=="manager").map(u=>{
     const mode = day[u.id] || "office";
     
-// hearings icon for this user on this date
-const hs = (w.dayMeta?.[dateIso]?.hearings?.[u.id]) || [];
-const hearingIcon = hs.length
-  ? `<span class="hearingIcon" title="${escapeHtml(
-      hs.map(x => `${x.time||""} ${x.caseNumber||""} ${x.court||""}`.trim()).join(" • ")
-    )}">⚖️</span>`
-  : "";
     // override info (якщо був) — ДЛЯ ЦЬОГО ЮЗЕРА
     const ov = ovDay[u.id];
     const ovText = ov
@@ -3208,7 +3020,6 @@ return `
 
 <div class="slotRight">
   <span class="tag ${tagClass}">${tagText}</span>
-  ${hearingIcon}
   ${canOverride ? `
     <button class="mgrEditBtn" data-act="mgrMenu" data-date="${dateIso}" data-uid="${u.id}" title="Редагувати">✏️</button>
 
@@ -4139,8 +3950,6 @@ async function initAfterLogin(){
   await refreshProfilesCache();
   buildTeamFromProfiles();
   buildBirthdaysFromProfiles();
-  buildLastNameIndexFromProfiles();
-
   // 2) UI for "me" (hidden selector + label)
   initRosterUI();
   setMeToLoggedInUser();
